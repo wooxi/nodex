@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -30,6 +32,8 @@ type Syncer struct {
 	accessLog *AccessLog
 
 	hy2Last map[int64]xray.Traffic // hysteria2 流量快照
+
+	lastFingerprint string // 最近应用的配置指纹
 
 	mu       sync.Mutex
 	running  bool
@@ -123,12 +127,32 @@ func (s *Syncer) syncOnce() {
 
 	ctx := context.Background()
 
-	// 1. 拉取节点配置（协议/端口等）—— 用于校验，本地覆盖为主
+	// 1. 拉取节点配置（端口/网络/TLS 等，本地覆盖为辅）
 	remote, err := s.panel.FetchConfig(ctx)
 	if err != nil {
 		s.setErr("拉取节点配置失败: " + err.Error())
 		return
 	}
+	// 解析 ws/grpc 传输参数并注入 xray
+	remoteCfg := &xray.RemoteConfig{
+		Protocol: remote.Protocol,
+		Port:     remote.ServerPort,
+		Network:  remote.Network,
+		TLS:      remote.TLS,
+		Flow:     remote.Flow,
+		Cipher:   remote.Cipher,
+	}
+	if len(remote.NetworkSettings) > 0 {
+		var ns struct {
+			Path string `json:"path"`
+			Host string `json:"host"`
+		}
+		if err := json.Unmarshal(remote.NetworkSettings, &ns); err == nil {
+			remoteCfg.WSPath = ns.Path
+			remoteCfg.WSHost = ns.Host
+		}
+	}
+	s.xm.SetRemoteConfig(remoteCfg)
 	// 2. 拉取用户列表并注入 xray 与 hysteria2
 	users, err := s.panel.FetchUsers(ctx)
 	if err != nil {
@@ -147,6 +171,20 @@ func (s *Syncer) syncOnce() {
 	if remote.Protocol != "" && cfg.Panel.NodeType == "" {
 		cfg.Panel.NodeType = remote.Protocol
 		s.xm.UpdateConfig(cfg)
+	}
+
+	// 3.5 配置指纹变化时重启 xray（使 remote/users 生效）
+	fingerprint := fmt.Sprintf("%s|%d|%s|%d|%v",
+		remoteCfg.Protocol, remoteCfg.Port, remoteCfg.Network, remoteCfg.TLS, users)
+	if fingerprint != s.lastFingerprint {
+		s.lastFingerprint = fingerprint
+		if err := s.xm.Restart(); err != nil {
+			s.setErr("重启 xray 应用配置失败: " + err.Error())
+			return
+		}
+		s.stats.Reset()
+		s.ResetHy2()
+		log.Printf("[nodex] 面板配置已应用（端口=%d 网络=%s 用户=%d）", remoteCfg.Port, remoteCfg.Network, len(users))
 	}
 
 	// 4. 推送流量增量（xray + hysteria2 合并）

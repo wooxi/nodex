@@ -22,14 +22,17 @@ type Client struct {
 }
 
 // Config 面板返回的节点配置
+// 面板模式：端口/网络/TLS 等以面板返回为准，本地配置提供 Reality 私钥等补充
+// 注意：V2Board 的 vless 节点常配 ws + CDN（tls=1, network=ws）
 type Config struct {
-	Protocol   string `json:"protocol"`
-	ListenIP   string `json:"listen_ip"`
-	ServerPort int    `json:"server_port"`
-	Network    string `json:"network"`
-	Flow       string `json:"flow"`
-	TLS        int    `json:"tls"`
-	Cipher     string `json:"cipher"`
+	Protocol        string          `json:"protocol"`
+	ListenIP        string          `json:"listen_ip"`
+	ServerPort      int             `json:"server_port"`
+	Network         string          `json:"network"`
+	NetworkSettings json.RawMessage `json:"networkSettings"`
+	Flow            string          `json:"flow"`
+	TLS             int             `json:"tls"`
+	Cipher          string          `json:"cipher"`
 
 	BaseConfig struct {
 		PushInterval int `json:"push_interval"`
@@ -115,13 +118,12 @@ func (c *Client) FetchConfig(ctx context.Context) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	var resp struct {
-		Data Config `json:"data"`
-	}
-	if err := json.Unmarshal(data, &resp); err != nil {
+	// 面板返回格式：顶层直接是节点配置字段（无 data 包装）
+	var cfg Config
+	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("解析节点配置失败: %w", err)
 	}
-	return &resp.Data, nil
+	return &cfg, nil
 }
 
 // FetchUsers 拉取用户列表

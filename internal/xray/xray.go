@@ -20,9 +20,22 @@ import (
 
 // Manager 管理 xray 进程的生命周期与配置生成
 type Manager struct {
-	cfg   *config.Config
-	cmd   *exec.Cmd
-	users []User // 面板用户（由同步器注入）
+	cfg    *config.Config
+	cmd    *exec.Cmd
+	users  []User // 面板用户（由同步器注入）
+	remote *RemoteConfig // 面板返回的节点配置（端口/网络/TLS）
+}
+
+// RemoteConfig 面板返回的节点参数（由同步器注入）
+type RemoteConfig struct {
+	Protocol   string
+	Port       int
+	Network    string
+	TLS        int
+	Flow       string
+	Cipher     string
+	WSHost     string
+	WSPath     string
 }
 
 func NewManager(cfg *config.Config) *Manager {
@@ -31,6 +44,9 @@ func NewManager(cfg *config.Config) *Manager {
 
 // SetUsers 注入面板用户列表
 func (m *Manager) SetUsers(users []User) { m.users = users }
+
+// SetRemoteConfig 注入面板返回的节点配置
+func (m *Manager) SetRemoteConfig(r *RemoteConfig) { m.remote = r }
 
 // UpdateConfig 以新配置重建（进程不重启，由外部调用 Restart）
 func (m *Manager) UpdateConfig(cfg *config.Config) { m.cfg = cfg }
@@ -258,49 +274,169 @@ func (m *Manager) BuildConfig() ([]byte, error) {
 	return json.MarshalIndent(out, "", "  ")
 }
 
-// buildLocalInbound 本地模式：按表单配置生成单个入站
+// buildLocalInbound 本地模式：按表单配置生成单个入站（hysteria2 由独立进程管理，不进 xray）
 func (m *Manager) buildLocalInbound() []any {
 	cfg := m.cfg.Node
 	var inbounds []any
 
-	switch cfg.Protocol {
-	case "hysteria2":
-		inbounds = append(inbounds, m.hy2Inbound(cfg.Hy2, []User{{ID: 1, UUID: cfg.UUID}}))
-	default:
+	if cfg.Protocol != "hysteria2" {
 		inbounds = append(inbounds, m.xrayInbound(cfg, []User{{ID: 1, UUID: cfg.UUID}}))
 	}
 	return inbounds
 }
 
-// buildPanelInbound 面板模式：按面板配置生成入站（xray + hysteria2 同时启用）
+// buildPanelInbound 面板模式：按面板返回的节点配置生成入站（hysteria2 由独立进程管理）
 func (m *Manager) buildPanelInbound(users []User) []any {
 	cfg := m.cfg
 	var inbounds []any
 
-	// 主入站：根据面板协议决定（vless/vmess/trojan/shadowsocks）
+	// 面板模式：端口/网络/TLS 以面板返回为准（本地 Reality 参数作为补充）
+	port := cfg.Node.Port
+	tlsMode := cfg.Node.TLS
+	network := "tcp"
+	if m.remote != nil {
+		if m.remote.Port > 0 {
+			port = m.remote.Port
+		}
+		if m.remote.Network != "" {
+			network = m.remote.Network
+		}
+		// 面板 tls 字段优先（0=关闭 1=TLS 2=Reality）；面板关闭 TLS 时不用 Reality（客户端订阅与节点保持一致）
+		if m.remote.TLS == 0 && tlsMode == 2 {
+			tlsMode = 0
+		}
+	}
+
 	node := config.NodeConfig{
 		Protocol:   cfg.Panel.NodeType,
-		Port:       cfg.Node.Port,
+		Port:       port,
 		UUID:       "",
-		TLS:        cfg.Node.TLS,
+		TLS:        tlsMode,
 		CertPath:   cfg.Node.CertPath,
 		KeyPath:    cfg.Node.KeyPath,
 		ServerName: cfg.Node.ServerName,
 		Reality:    cfg.Node.Reality,
 		SSMethod:   cfg.Node.SSMethod,
 	}
-	switch node.Protocol {
-	case "hysteria2", "hysteria":
-		inbounds = append(inbounds, m.hy2Inbound(cfg.Node.Hy2, users))
-	default:
-		inbounds = append(inbounds, m.xrayInbound(node, users))
-	}
-
-	// 面板模式始终同时提供 hysteria2 节点
-	if cfg.Node.Hy2.Port > 0 && cfg.Panel.NodeType != "hysteria2" && cfg.Panel.NodeType != "hysteria" {
-		inbounds = append(inbounds, m.hy2Inbound(cfg.Node.Hy2, users))
+	if node.Protocol != "hysteria2" && node.Protocol != "hysteria" {
+		inbounds = append(inbounds, m.xrayInboundWithNetwork(node, users, network, m.remote))
 	}
 	return inbounds
+}
+
+// xrayInboundWithNetwork 构建带网络传输的入站（支持 ws/grpc/httpupgrade 等）
+func (m *Manager) xrayInboundWithNetwork(cfg config.NodeConfig, users []User, network string, remote *RemoteConfig) any {
+	stream := map[string]any{"network": network}
+
+	// 传输层配置（ws path/host 等）
+	switch network {
+	case "ws", "websocket":
+		ws := map[string]any{}
+		if remote != nil {
+			if remote.WSPath != "" {
+				ws["path"] = remote.WSPath
+			}
+			if remote.WSHost != "" {
+				ws["host"] = remote.WSHost
+			}
+		}
+		stream["wsSettings"] = ws
+	case "grpc":
+		g := map[string]any{}
+		if remote != nil && remote.WSPath != "" {
+			g["serviceName"] = remote.WSPath
+		}
+		stream["grpcSettings"] = g
+	case "httpupgrade":
+		h := map[string]any{}
+		if remote != nil && remote.WSPath != "" {
+			h["path"] = remote.WSPath
+		}
+		if remote != nil && remote.WSHost != "" {
+			h["host"] = remote.WSHost
+		}
+		stream["httpupgradeSettings"] = h
+	}
+
+	// TLS 层
+	if cfg.TLS == 2 {
+		serverNames := config.SplitCSV(cfg.Reality.ServerNames)
+		shortIDs := config.SplitCSV(cfg.Reality.ShortIDs)
+		if len(shortIDs) == 0 {
+			shortIDs = []string{""}
+		}
+		stream["security"] = "reality"
+		stream["realitySettings"] = map[string]any{
+			"show":        false,
+			"dest":        cfg.Reality.Dest,
+			"serverNames": serverNames,
+			"privateKey":  cfg.Reality.PrivateKey,
+			"shortIds":    shortIDs,
+		}
+	} else if cfg.TLS == 1 {
+		stream["security"] = "tls"
+		tlsS := map[string]any{
+			"certificates": []any{map[string]any{
+				"certificateFile": cfg.CertPath,
+				"keyFile":         cfg.KeyPath,
+			}},
+		}
+		if cfg.ServerName != "" {
+			tlsS["serverName"] = cfg.ServerName
+		}
+		stream["tlsSettings"] = tlsS
+	} else {
+		stream["security"] = "none"
+	}
+
+	var settings map[string]any
+	switch cfg.Protocol {
+	case "vmess":
+		clients := []any{}
+		for _, u := range users {
+			clients = append(clients, map[string]any{
+				"id": u.UUID, "email": emailOf(u.ID),
+			})
+		}
+		settings = map[string]any{"clients": clients}
+	case "trojan":
+		clients := []any{}
+		for _, u := range users {
+			clients = append(clients, map[string]any{
+				"password": u.UUID, "email": emailOf(u.ID),
+			})
+		}
+		settings = map[string]any{"clients": clients}
+	case "shadowsocks":
+		usersArr := []any{}
+		for _, u := range users {
+			usersArr = append(usersArr, map[string]any{
+				"email": emailOf(u.ID), "password": u.UUID, "method": cfg.SSMethod,
+			})
+		}
+		settings = map[string]any{"users": usersArr}
+	default: // vless
+		clients := []any{}
+		flow := ""
+		if cfg.TLS == 2 {
+			flow = "xtls-rprx-vision"
+		}
+		for _, u := range users {
+			clients = append(clients, map[string]any{
+				"id": u.UUID, "email": emailOf(u.ID), "flow": flow,
+			})
+		}
+		settings = map[string]any{"clients": clients, "decryption": "none"}
+	}
+
+	return map[string]any{
+		"tag":            "in-main",
+		"listen":         "0.0.0.0",
+		"port":           cfg.Port,
+		"protocol":       cfg.Protocol,
+		"settings":       settings,
+		"streamSettings": stream,
+	}
 }
 
 // xrayInbound 构建 vless/vmess/trojan/shadowsocks 入站
