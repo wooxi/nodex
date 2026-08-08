@@ -124,8 +124,17 @@ func (m *Hy2Manager) BuildConfig(authURL, trafficSecret string) (string, error) 
 
 // Start 生成配置并启动 hysteria2
 func (m *Hy2Manager) Start() error {
-	if m.IsRunning() {
+	// 自己启动的进程还在跑则跳过
+	if m.cmd != nil && m.cmd.Process != nil && (m.cmd.ProcessState == nil || !m.cmd.ProcessState.Exited()) {
 		return nil
+	}
+	// 残留进程先清理（确保带当前环境重启）
+	if data, err := os.ReadFile(m.pidFile()); err == nil {
+		if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && pid > 0 {
+			if syscall.Kill(pid, 0) == nil {
+				m.Stop()
+			}
+		}
 	}
 	conf, err := m.BuildConfig(m.authURL, m.secret)
 	if err != nil {

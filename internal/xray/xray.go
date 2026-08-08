@@ -115,8 +115,14 @@ func (m *Manager) writePID(pid int) {
 
 // Start 生成配置并启动 xray
 func (m *Manager) Start() error {
-	if m.IsRunning() {
+	// 自己启动的进程还在跑则跳过
+	if m.cmd != nil && m.cmd.Process != nil && (m.cmd.ProcessState == nil || !m.cmd.ProcessState.Exited()) {
 		return nil
+	}
+	// 残留进程（pid 文件记录但非本实例启动，如重启/崩溃遗留）：先清理
+	// 确保以当前环境（TZ 等）重启，避免旧进程占用端口
+	if m.readPID() > 0 {
+		m.Stop()
 	}
 	conf, err := m.BuildConfig()
 	if err != nil {
