@@ -9,6 +9,8 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -346,19 +348,26 @@ func (s *Syncer) hy2Secret() string {
 	return hex.EncodeToString(h[:16])
 }
 
-// AccessLog 解析 xray access log 提取在线设备（uid -> IP 集合）
+var (
+	addrRe = regexp.MustCompile(`"addr":\s*"([^"]+)"`)
+	uidRe  = regexp.MustCompile(`"id":\s*"(\d+)"`)
+)
+
+// AccessLog 解析 xray access log 与 hysteria 日志提取在线设备（uid -> IP 集合）
 type AccessLog struct {
-	mu      sync.Mutex
-	path    string
-	offsets map[int64]int64 // uid -> 上次解析到的文件偏移
-	alive   map[int64]map[string]time.Time // uid -> ip -> 最后活跃时间
-	users   map[int64]string               // uid -> uuid
+	mu        sync.Mutex
+	path      string // xray access log
+	hy2Path   string // hysteria 日志
+	offsets   map[string]int64 // 文件 -> 上次解析偏移
+	alive     map[int64]map[string]time.Time // uid -> ip -> 最后活跃时间
+	users     map[int64]string               // uid -> uuid
 }
 
 func NewAccessLog(nodeDir string) *AccessLog {
 	return &AccessLog{
 		path:    filepath.Join(nodeDir, "xray", "access.log"),
-		offsets: map[int64]int64{},
+		hy2Path: filepath.Join(nodeDir, "hy2", "hy2.log"),
+		offsets: map[string]int64{},
 		alive:   map[int64]map[string]time.Time{},
 		users:   map[int64]string{},
 	}
@@ -368,6 +377,7 @@ func (a *AccessLog) UpdateConfig(nodeDir string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.path = filepath.Join(nodeDir, "xray", "access.log")
+	a.hy2Path = filepath.Join(nodeDir, "hy2", "hy2.log")
 }
 
 func (a *AccessLog) SetUsers(users []xray.User) {
@@ -379,57 +389,104 @@ func (a *AccessLog) SetUsers(users []xray.User) {
 	}
 }
 
-// Parse 增量解析 access log（每次只读新增部分）
+// Parse 增量解析日志（xray access + hysteria，每次只读新增部分）
 func (a *AccessLog) Parse() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	f, err := os.Open(a.path)
+	now := time.Now()
+
+	// xray access log
+	if data := a.readNew(a.path); len(data) > 0 {
+		for _, line := range strings.Split(data, "\n") {
+			if !strings.Contains(line, "from ") || !strings.Contains(line, "accepted ") {
+				continue
+			}
+			parts := strings.Fields(line)
+			var ip string
+			for i, p := range parts {
+				if p == "from" && i+1 < len(parts) {
+					ip = strings.Split(parts[i+1], ":")[0]
+					break
+				}
+			}
+			uid := a.findUID(line)
+			if ip == "" || uid == 0 {
+				continue
+			}
+			if a.alive[uid] == nil {
+				a.alive[uid] = map[string]time.Time{}
+			}
+			a.alive[uid][ip] = now
+		}
+	}
+
+	// hysteria 日志: client connected {"addr": "1.2.3.4:port", "id": "1", ...}
+	if data := a.readNew(a.hy2Path); len(data) > 0 {
+		for _, line := range strings.Split(data, "\n") {
+			idx := strings.Index(line, "client connected")
+			disconnected := false
+			if idx < 0 {
+				idx = strings.Index(line, "client disconnected")
+				if idx < 0 {
+					continue
+				}
+				disconnected = true
+			}
+			// addr（可能带端口，需剥离）
+			ip := ""
+			if m := addrRe.FindStringSubmatch(line); len(m) > 1 {
+				addr := m[1]
+				if strings.HasPrefix(addr, "[") { // [ipv6]:port
+					if end := strings.Index(addr, "]"); end > 0 {
+						ip = addr[1:end]
+					}
+				} else if idx := strings.LastIndex(addr, ":"); idx > 0 {
+					ip = addr[:idx] // ipv4:port
+				} else {
+					ip = addr
+				}
+			}
+			uid := int64(0)
+			if m := uidRe.FindStringSubmatch(line); len(m) > 1 {
+				uid, _ = strconv.ParseInt(m[1], 10, 64)
+			}
+			if ip == "" || uid == 0 {
+				continue
+			}
+			if a.alive[uid] == nil {
+				a.alive[uid] = map[string]time.Time{}
+			}
+			if disconnected {
+				delete(a.alive[uid], ip)
+			} else {
+				a.alive[uid][ip] = now
+			}
+		}
+	}
+}
+
+// readNew 读取文件新增部分（返回新增内容并更新偏移）
+func (a *AccessLog) readNew(path string) string {
+	f, err := os.Open(path)
 	if err != nil {
-		return
+		return ""
 	}
 	defer f.Close()
-
-	// 从上次偏移继续读
-	off := a.offsets[0]
+	off := a.offsets[path]
 	if st, err := f.Stat(); err == nil && st.Size() < off {
 		off = 0 // 日志被轮转/截断
 	}
 	if _, err := f.Seek(off, 0); err != nil {
-		return
+		return ""
 	}
-	buf := make([]byte, 64*1024)
+	buf := make([]byte, 256*1024)
 	n, err := f.Read(buf)
 	if err != nil && n == 0 {
-		return
+		return ""
 	}
-	a.offsets[0] = off + int64(n)
-
-	now := time.Now()
-	for _, line := range strings.Split(string(buf[:n]), "\n") {
-		// 格式: 2026/08/08 12:00:00 from 1.2.3.4:5555 accepted tcp:xxx:443 [email@...]
-		if !strings.Contains(line, "from ") || !strings.Contains(line, "accepted ") {
-			continue
-		}
-		parts := strings.Fields(line)
-		// 找 from 后的 IP
-		var ip string
-		for i, p := range parts {
-			if p == "from" && i+1 < len(parts) {
-				ip = strings.Split(parts[i+1], ":")[0]
-				break
-			}
-		}
-		// 找 email
-		uid := a.findUID(line)
-		if ip == "" || uid == 0 {
-			continue
-		}
-		if a.alive[uid] == nil {
-			a.alive[uid] = map[string]time.Time{}
-		}
-		a.alive[uid][ip] = now
-	}
+	a.offsets[path] = off + int64(n)
+	return string(buf[:n])
 }
 
 // findUID 从日志行提取 uid
