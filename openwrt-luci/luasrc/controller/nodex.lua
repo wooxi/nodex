@@ -82,9 +82,10 @@ fi
 unzip -o -q xray.zip xray
 
 # 安装二进制
-install -m755 nodex /usr/bin/nodex
-install -m755 xray /usr/bin/xray
-install -m755 hysteria /usr/bin/hysteria
+cp nodex /usr/bin/nodex
+cp xray /usr/bin/xray
+cp hysteria /usr/bin/hysteria
+chmod +x /usr/bin/nodex /usr/bin/xray /usr/bin/hysteria
 
 # init.d 脚本（不存在时创建）
 if [ ! -f /etc/init.d/nodex ]; then
