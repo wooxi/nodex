@@ -8,7 +8,7 @@ COPY webui/ ./
 RUN npm run build
 
 # 阶段2: Go 后端构建
-FROM golang:1.23-alpine AS backend
+FROM golang:1.26-alpine AS backend
 WORKDIR /build
 COPY go.mod go.sum ./
 RUN go mod download
