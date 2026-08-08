@@ -82,6 +82,11 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// 本机回环免认证（OpenWrt LuCI 代理模式）
+		if s.cfg.Web.AllowLocal && isLocal(r.RemoteAddr) {
+			next(w, r)
+			return
+		}
 		token := r.Header.Get("X-Auth-Token")
 		if token == "" {
 			if c, err := r.Cookie("nodex_token"); err == nil {
@@ -424,6 +429,10 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(v)
+}
+
+func isLocal(addr string) bool {
+	return strings.HasPrefix(addr, "127.0.0.1:") || strings.HasPrefix(addr, "[::1]:")
 }
 
 func genToken() string {

@@ -50,16 +50,19 @@ jobs:
 
       - name: Build ipk
         run: |
-          mkdir -p sdk/package/nodex
+          mkdir -p sdk/package/nodex sdk/package/luci-app-nodex
           cp -r openwrt/* sdk/package/nodex/
+          cp -r openwrt-luci/* sdk/package/luci-app-nodex/
           cd sdk
           make defconfig
           make package/nodex/compile V=s
+          make package/luci-app-nodex/compile V=s
 
       - name: Collect artifacts
         run: |
           mkdir -p dist
           cp sdk/bin/packages/x86_64/*/nodex_*.ipk dist/ 2>/dev/null || true
+          cp sdk/bin/packages/*/*/luci-app-nodex_*.ipk dist/ 2>/dev/null || true
           cp openwrt/files/nodex dist/nodex-linux-amd64
           ls -la dist/
 

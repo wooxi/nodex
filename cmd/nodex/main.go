@@ -66,7 +66,11 @@ func main() {
 	mgr.StartAll()
 
 	srv := web.New(cfg, *cfgPath, mgr)
-	addr := fmt.Sprintf("0.0.0.0:%d", cfg.Web.Port)
+	listen := cfg.Web.Listen
+	if listen == "" {
+		listen = "0.0.0.0"
+	}
+	addr := fmt.Sprintf("%s:%d", listen, cfg.Web.Port)
 	log.Printf("[nodex] NodeX v%s Web 管理界面: http://%s", version, addr)
 	if err := http.ListenAndServe(addr, srv.Handler()); err != nil {
 		log.Fatalf("[nodex] Web 服务启动失败: %v", err)

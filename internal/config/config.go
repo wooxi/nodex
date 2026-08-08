@@ -17,8 +17,10 @@ type Config struct {
 }
 
 type WebConfig struct {
-	Port     int    `json:"port"`     // Web 管理端口
-	Password string `json:"password"` // 管理密码（bcrypt hash）
+	Port       int    `json:"port"`       // Web 管理端口
+	Listen     string `json:"listen"`     // 监听地址（默认 0.0.0.0；OpenWrt LuCI 模式用 127.0.0.1）
+	Password   string `json:"password"`   // 管理密码（bcrypt hash）
+	AllowLocal bool   `json:"allow_local"` // 允许本机回环免认证（LuCI 代理访问）
 }
 
 type SystemConfig struct {
