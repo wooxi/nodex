@@ -45,8 +45,33 @@ local uci = require "luci.model.uci".cursor()
 .nodex-tag-ok { background:#e8f5e9; color:#2e7d32; }
 .nodex-tag-err { background:#fdecea; color:#c62828; }
 .nodex-tag-off { background:#f5f5f5; color:#999; }
-.nodex-pre { background:#263238; color:#cfd8dc; padding:12px; border-radius:4px; font-size:12px;
-  max-height:60vh; overflow:auto; white-space:pre-wrap; font-family:monospace; }
+.nodex-pre { background:#1e242b; color:#b8c4ce; padding:14px; border-radius:6px; font-size:12px;
+  max-height:60vh; overflow:auto; white-space:pre-wrap; word-break:break-all; font-family:Consolas,'JetBrains Mono',monospace;
+  line-height:1.7; border:1px solid #2c353d; }
+.nodex-pre .lg-time { color:#7a8a99; }
+.nodex-pre .lg-info { color:#b8c4ce; }
+.nodex-pre .lg-warn { color:#e6a23c; }
+.nodex-pre .lg-err { color:#f56c6c; font-weight:600; }
+/* 统计卡片网格 */
+.nx-stats { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:14px; }
+.nx-stat { background:#fff; border:1px solid #e5e9ef; border-radius:8px; padding:16px; text-align:center; }
+.nx-stat .num { font-size:26px; font-weight:700; color:#1e88e5; }
+.nx-stat .num.ok { color:#2e7d32; }
+.nx-stat .lbl { font-size:12px; color:#888; margin-top:4px; }
+/* 卡片标题 */
+.nodex-card h3 { font-size:14px; border-bottom:1px solid #f0f2f5; padding-bottom:8px; margin-bottom:10px; }
+/* 内核开关行 */
+.nx-kernel-row { display:flex; align-items:center; gap:12px; padding:8px 0; border-bottom:1px solid #f5f6f8; flex-wrap:wrap; }
+.nx-kernel-row:last-child { border-bottom:none; }
+.nx-kernel-name { width:110px; font-weight:600; }
+.nx-kernel-dots { display:flex; gap:4px; }
+.nx-dot { width:8px; height:8px; border-radius:50%; background:#e0e0e0; display:inline-block; }
+.nx-dot.on { background:#2e7d32; }
+.nx-dot.off { background:#e53935; }
+/* 日志工具栏 */
+.nx-logbar { display:flex; align-items:center; gap:10px; margin-bottom:10px; flex-wrap:wrap; }
+.nx-logbar .info { margin-left:auto; font-size:12px; color:#999; }
+@media (max-width:900px){ .nx-stats{grid-template-columns:repeat(2,1fr);} }
 .nodex-err { color:#c62828; font-size:13px; margin:8px 0; }
 .nodex-ok { color:#2e7d32; font-size:13px; margin:8px 0; }
 .nodex-proto { display:inline-block; padding:8px 14px; margin:0 6px 6px 0; border:1px solid #ccc; border-radius:4px; cursor:pointer; font-size:13px; }

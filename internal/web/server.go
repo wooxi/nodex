@@ -271,6 +271,14 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request) {
 		} else {
 			s.mgr.StopAll()
 		}
+	case "start-xray":
+		s.mgr.StartAllXray()
+	case "stop-xray":
+		s.mgr.StopAllXray()
+	case "start-hy2":
+		s.mgr.StartAllHy2()
+	case "stop-hy2":
+		s.mgr.StopAllHy2()
 	case "restart":
 		if req.NodeID != "" {
 			s.mgr.Restart(req.NodeID)

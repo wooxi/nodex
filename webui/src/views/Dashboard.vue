@@ -24,6 +24,25 @@
       </div>
     </div>
 
+    <!-- 内核总开关 -->
+    <div class="card">
+      <div class="card-title"><el-icon><Switch /></el-icon>内核总开关</div>
+      <el-table :data="kernelRows" size="small">
+        <el-table-column prop="name" label="内核" width="120" />
+        <el-table-column label="状态" width="160">
+          <template #default="{ row }">
+            <el-tag :type="row.state === '运行中' ? 'success' : (row.state === '已停止' ? 'danger' : 'warning')" size="small">{{ row.state }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作">
+          <template #default="{ row }">
+            <el-button size="small" type="danger" :loading="kernelActing === row.action" @click="kernelAction('stop-' + row.action, row.name)">全部停止</el-button>
+            <el-button size="small" type="success" :loading="kernelActing === 'start-' + row.action" @click="kernelAction('start-' + row.action, row.name)">全部启动</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
+
     <!-- 节点状态 -->
     <div class="card">
       <div class="card-title"><el-icon><Connection /></el-icon>节点状态</div>
@@ -84,6 +103,32 @@ let timer = null
 const onlineCount = computed(() => users.value.filter(u => u.ips && u.ips.length).length)
 const totalTraffic = computed(() => users.value.reduce((s, u) => s + (u.traffic || 0), 0))
 const panelOkCount = computed(() => (status.value.nodes || []).filter(n => n.panel.running && !n.panel.lastError).length)
+const kernelActing = ref('')
+
+const kernelRows = computed(() => {
+  const nodes = status.value.nodes || []
+  const enabled = nodes.filter(n => n.enabled)
+  const total = enabled.length
+  const summarize = (key) => {
+    const on = enabled.filter(n => n[key] && n[key].running).length
+    if (on === 0) return '已停止'
+    if (on === total) return '运行中'
+    return on + '/' + total + ' 运行'
+  }
+  return [
+    { name: 'Xray', action: 'xray', state: summarize('xray') },
+    { name: 'Hysteria2', action: 'hy2', state: summarize('hy2') }
+  ]
+})
+
+async function kernelAction(action, name) {
+  kernelActing.value = action
+  try {
+    await api.post('/api/action', { action })
+    ElMessage.success(name + ' 操作成功')
+    setTimeout(refresh, 1500)
+  } catch (e) { ElMessage.error(e.message) } finally { kernelActing.value = '' }
+}
 
 function shortVer(v) {
   if (!v || v === '未知') return v || '未知'

@@ -152,6 +152,48 @@ func (m *Manager) Restart(id string) {
 	}
 }
 
+// StopAllXray 停止所有节点的 xray
+func (m *Manager) StopAllXray() {
+	for _, rt := range m.Runtimes() {
+		rt.Xray.Stop()
+	}
+}
+
+// StartAllXray 启动所有启用节点的 xray
+func (m *Manager) StartAllXray() {
+	for _, rt := range m.Runtimes() {
+		if !rt.Cfg.Enabled {
+			continue
+		}
+		if err := rt.Xray.Start(); err != nil {
+			log.Printf("[nodex][%s] 启动 xray 失败: %v", rt.Cfg.ID, err)
+		} else {
+			go m.connectStats(rt)
+		}
+	}
+}
+
+// StopAllHy2 停止所有节点的 hysteria2
+func (m *Manager) StopAllHy2() {
+	for _, rt := range m.Runtimes() {
+		rt.Hy2.Stop()
+		rt.Syncer.ResetHy2()
+	}
+}
+
+// StartAllHy2 启动所有启用节点的 hysteria2
+func (m *Manager) StartAllHy2() {
+	for _, rt := range m.Runtimes() {
+		if !rt.Cfg.Enabled {
+			continue
+		}
+		rt.Hy2.SetAuth(fmt.Sprintf("http://127.0.0.1:%d/api/hy2-auth?node=%s", m.global.Web.Port, rt.Cfg.ID), rt.Syncer.Hy2Secret())
+		if err := rt.Hy2.Start(); err != nil {
+			log.Printf("[nodex][%s] 启动 hysteria2 失败: %v", rt.Cfg.ID, err)
+		}
+	}
+}
+
 // SyncAll 触发全节点同步（面板配置变更后）
 func (m *Manager) SyncAll() {
 	for _, rt := range m.Runtimes() {
