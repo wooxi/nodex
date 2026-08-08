@@ -1,0 +1,55 @@
+<%
+-- NodeX 管理界面（服务端模板 + 独立 JS 应用）
+local uci = require "luci.model.uci".cursor()
+-%>
+<%+header%>
+<div id="nodex-app" style="padding: 0 8px;">
+    <div style="background:#fff;border:1px solid #ddd;border-radius:4px;padding:16px;margin-bottom:12px;">
+        <h2 style="margin:0 0 4px 0;">NodeX 节点管家</h2>
+        <div style="color:#999;font-size:12px;">Xray + Hysteria2 节点管理 · Xboard 面板对接</div>
+    </div>
+    <div style="background:#fff;border:1px solid #ddd;border-radius:4px;padding:12px;">
+        <div id="nodex-menu" style="margin-bottom:12px;border-bottom:1px solid #eee;padding-bottom:8px;">
+            <a href="#overview" class="nodex-menu-item" data-page="overview">总览</a>
+            <a href="#nodes" class="nodex-menu-item" data-page="nodes">节点管理</a>
+            <a href="#panel" class="nodex-menu-item" data-page="panel">面板对接</a>
+            <a href="#system" class="nodex-menu-item" data-page="system">系统设置</a>
+            <a href="#logs" class="nodex-menu-item" data-page="logs">运行日志</a>
+        </div>
+        <div id="nodex-content">
+            <div style="color:#999;">加载中...</div>
+        </div>
+    </div>
+</div>
+<script src="<%=media%>/nodex/app.js"></script>
+<style>
+.nodex-menu-item { display:inline-block; padding:6px 14px; margin-right:4px; text-decoration:none; color:#333; border-radius:3px; }
+.nodex-menu-item:hover { background:#f0f0f0; }
+.nodex-menu-item.active { background:#1e88e5; color:#fff; }
+.nodex-card { border:1px solid #eee; border-radius:4px; padding:14px; margin-bottom:12px; }
+.nodex-card h3 { margin:0 0 10px 0; font-size:15px; }
+.nodex-table { width:100%; border-collapse:collapse; font-size:13px; }
+.nodex-table th { background:#f7f7f7; text-align:left; padding:8px; border:1px solid #eee; }
+.nodex-table td { padding:8px; border:1px solid #eee; }
+.nodex-btn { display:inline-block; padding:5px 12px; margin-right:6px; border:1px solid #ccc; border-radius:3px;
+  background:#f9f9f9; cursor:pointer; font-size:13px; text-decoration:none; color:#333; }
+.nodex-btn:hover { background:#eee; }
+.nodex-btn-primary { background:#1e88e5; color:#fff; border-color:#1e88e5; }
+.nodex-btn-danger { background:#e53935; color:#fff; border-color:#e53935; }
+.nodex-field { margin-bottom:10px; }
+.nodex-field label { display:inline-block; width:160px; font-size:13px; color:#555; }
+.nodex-field input, .nodex-field select { padding:5px 8px; border:1px solid #ccc; border-radius:3px; font-size:13px; }
+.nodex-field input[type=text] { width:340px; }
+.nodex-field input[type=number] { width:120px; }
+.nodex-tag { display:inline-block; padding:2px 8px; border-radius:3px; font-size:12px; }
+.nodex-tag-ok { background:#e8f5e9; color:#2e7d32; }
+.nodex-tag-err { background:#fdecea; color:#c62828; }
+.nodex-tag-off { background:#f5f5f5; color:#999; }
+.nodex-pre { background:#263238; color:#cfd8dc; padding:12px; border-radius:4px; font-size:12px;
+  max-height:60vh; overflow:auto; white-space:pre-wrap; font-family:monospace; }
+.nodex-err { color:#c62828; font-size:13px; margin:8px 0; }
+.nodex-ok { color:#2e7d32; font-size:13px; margin:8px 0; }
+.nodex-proto { display:inline-block; padding:8px 14px; margin:0 6px 6px 0; border:1px solid #ccc; border-radius:4px; cursor:pointer; font-size:13px; }
+.nodex-proto.active { border-color:#1e88e5; background:#e3f2fd; color:#1e88e5; }
+</style>
+<%+footer%>

@@ -32,8 +32,10 @@ define Package/luci-app-nodex/install
 	$(INSTALL_DATA) ./luasrc/controller/nodex.lua $(1)/usr/lib/lua/luci/controller/
 	$(INSTALL_DIR) $(1)/usr/share/luci/menu.d
 	$(INSTALL_DATA) ./luasrc/menu.d/luci-app-nodex.json $(1)/usr/share/luci/menu.d/
-	$(INSTALL_DIR) $(1)/www/luci-static/resources/view/nodex
-	$(INSTALL_DATA) ./luasrc/view/nodex/*.js $(1)/www/luci-static/resources/view/nodex/
+	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/view/nodex
+	$(INSTALL_DATA) ./luasrc/view/nodex/index.htm $(1)/usr/lib/lua/luci/view/nodex/
+	$(INSTALL_DIR) $(1)/www/luci-static/resources/nodex
+	$(INSTALL_DATA) ./htroot/luci-static/resources/nodex/app.js $(1)/www/luci-static/resources/nodex/
 endef
 
 $(eval $(call BuildPackage,luci-app-nodex))
