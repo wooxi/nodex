@@ -10,7 +10,7 @@
         </el-form-item>
         <template v-if="form.enabled">
           <el-form-item label="面板地址" required>
-            <el-input v-model="form.url" placeholder="http://192.168.100.4:7001" />
+            <el-input v-model="form.url" placeholder="http://panel.example.com" />
           </el-form-item>
           <el-form-item label="通信密钥" required>
             <el-input v-model="form.token" placeholder="面板后台生成的通信密钥" show-password />

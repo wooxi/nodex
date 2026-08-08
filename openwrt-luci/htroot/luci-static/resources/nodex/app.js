@@ -47,10 +47,54 @@
         { value: 'hysteria2', label: 'Hysteria2' }
     ];
 
+    // ---------- 后端状态 ----------
+    function renderBackend() {
+        var el = document.getElementById('nodex-content');
+        var card = document.createElement('div');
+        card.className = 'nodex-card';
+        card.id = 'nx-backend-card';
+        card.innerHTML = '<h3>后端状态</h3><div style="color:#999">检测中...</div>';
+        el.appendChild(card);
+        fetch('/cgi-bin/luci/admin/services/nodex/backend/status').then(function (r) { return r.json(); }).then(function (b) {
+            function bin(ok, name) { return '<span class="nodex-tag ' + (ok ? 'nodex-tag-ok' : 'nodex-tag-err') + '">' + (ok ? '已安装' : '缺失') + '</span> ' + esc(name); }
+            var runTag = b.nodex_running ? '<span class="nodex-tag nodex-tag-ok">运行中</span>' : '<span class="nodex-tag nodex-tag-err">未运行</span>';
+            var installBtn = (b.nodex_bin && b.xray_bin && b.hysteria_bin)
+                ? '<button class="nodex-btn" onclick="window.nodexRestartBackend()">重启后端</button>'
+                : '<button class="nodex-btn nodex-btn-primary" onclick="window.nodexInstallBackend()">下载并安装后端</button>';
+            card.innerHTML =
+                '<h3>后端状态</h3>' +
+                '<table class="nodex-table"><tr><th>组件</th><th>状态</th></tr>' +
+                '<tr><td>nodex 守护进程</td><td>' + bin(b.nodex_bin, '/usr/bin/nodex') + ' ' + runTag + '</td></tr>' +
+                '<tr><td>xray 内核</td><td>' + bin(b.xray_bin, '/usr/bin/xray') + '</td></tr>' +
+                '<tr><td>hysteria 内核</td><td>' + bin(b.hysteria_bin, '/usr/bin/hysteria') + '</td></tr>' +
+                '</table>' +
+                '<div style="margin-top:10px">' + installBtn + '</div>' +
+                (b.nodex_bin && !b.nodex_running ? '<div class="nodex-err" style="margin-top:6px">后端未运行，可点击上方按钮或 SSH 执行 /etc/init.d/nodex start</div>' : '');
+        }).catch(function () {
+            card.innerHTML = '<h3>后端状态</h3><div class="nodex-err">无法检测后端状态</div>';
+        });
+    }
+
+    window.nodexInstallBackend = function () {
+        if (!confirm('将下载并安装 nodex 守护进程 + xray + hysteria 内核（约 70MB），继续？')) return;
+        fetch('/cgi-bin/luci/admin/services/nodex/backend/install').then(function (r) { return r.json(); }).then(function (res) {
+            notify(res.message || '安装已启动', true);
+            setTimeout(function () { renderBackend(); }, 30000);
+        }).catch(function (e) { notify(e.message || '启动失败', false); });
+    };
+
+    window.nodexRestartBackend = function () {
+        fetch('/cgi-bin/luci/admin/services/nodex/backend/restart').then(function (r) { return r.json(); }).then(function (res) {
+            notify(res.message || '已重启', true);
+            setTimeout(function () { renderBackend(); location.reload(); }, 3000);
+        }).catch(function (e) { notify(e.message || '重启失败', false); });
+    };
+
     // ---------- 总览 ----------
     function renderOverview() {
         var el = document.getElementById('nodex-content');
         el.innerHTML = '<div style="color:#999">加载中...</div>';
+        renderBackend();
         Promise.all([api('/status'), api('/users')]).then(function (res) {
             var st = res[0], users = res[1].users || [];
             var nodes = st.nodes || [];
