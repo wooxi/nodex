@@ -48,6 +48,7 @@ jobs:
 
       - name: Build ipk
         run: |
+          mkdir -p sdk/package/nodex
           cp -r openwrt/* sdk/package/nodex/
           cd sdk
           make package/nodex/compile V=s
