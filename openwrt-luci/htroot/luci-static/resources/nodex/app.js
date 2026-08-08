@@ -12,7 +12,12 @@
             init.headers['Content-Type'] = 'application/json';
             init.body = JSON.stringify(opts.body);
         }
-        return fetch(API + path, init).then(function (r) { return r.json().catch(function () { return {}; }); });
+        return fetch(API + path, init).then(function (r) {
+            return r.json().catch(function () {
+                // 非 JSON：通常是 LuCI 会话过期返回登录页
+                throw new Error('API 请求失败：LuCI 会话可能已过期，请刷新页面重新登录');
+            });
+        });
     }
 
     function esc(s) {
@@ -212,7 +217,7 @@
             cfg.nodes.push(node);
             return api('/config', { method: 'PUT', body: cfg }).then(function () {
                 // 跳转到新节点编辑页
-                location.hash = '#nodeedit/' + node.id;
+                window.nodexGoEdit(node.id);
             });
         }).catch(function (e) { notify(e.message || '创建失败', false); });
     };
@@ -340,7 +345,7 @@
                 }).join('') + '</select>';
 
             el.innerHTML =
-                '<div class="nodex-card"><h3>节点编辑：' + esc(node.name) + ' <a class="nodex-btn" href="#nodes">返回</a></h3>' +
+                '<div class="nodex-card"><h3>节点编辑：' + esc(node.name) + ' <a class="nodex-btn" href="javascript:void(0)" onclick="window.nodexGo(\'nodes\')">返回</a></h3>' +
                 '<div class="nodex-field"><label>节点名称</label><input type="text" id="nx-name" value="' + esc(node.name) + '"></div>' +
                 '<div class="nodex-field"><label>启用节点</label><input type="checkbox" id="nx-enabled"' + (node.enabled ? ' checked' : '') + '></div></div>' +
                 '<div class="nodex-card"><h3>面板对接（本节点）</h3>' +
@@ -628,6 +633,22 @@
     };
 
     // ---------- 路由 ----------
+    window.nodexGo = function (page) {
+        // 直接渲染（绕开 LuCI hash 路由拦截）
+        document.querySelectorAll('.nodex-menu-item').forEach(function (a) {
+            a.className = 'nodex-menu-item' + (a.dataset.page === page ? ' active' : '');
+        });
+        if (page === 'nodes') renderNodes();
+        else if (page === 'panel') renderPanel();
+        else if (page === 'system') renderSystem();
+        else if (page === 'logs') renderLogs();
+        else renderOverview();
+    };
+
+    window.nodexGoEdit = function (id) {
+        renderNodeEdit(id);
+    };
+
     function route() {
         var hash = location.hash.replace(/^#\/?/, '');
         var parts = hash.split('/');
@@ -637,12 +658,8 @@
             a.className = 'nodex-menu-item' + (a.dataset.page === page ? ' active' : '');
         });
 
-        if (page === 'nodes') renderNodes();
-        else if (page === 'nodeedit' && parts[1]) renderNodeEdit(parts[1]);
-        else if (page === 'panel') renderPanel();
-        else if (page === 'system') renderSystem();
-        else if (page === 'logs') renderLogs();
-        else renderOverview();
+        if (page === 'nodeedit' && parts[1]) { renderNodeEdit(parts[1]); return; }
+        window.nodexGo(page);
     }
 
     window.addEventListener('hashchange', route);
