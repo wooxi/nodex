@@ -14,8 +14,9 @@
         }
         return fetch(API + path, init).then(function (r) {
             return r.json().catch(function () {
-                // 非 JSON：通常是 LuCI 会话过期返回登录页
-                throw new Error('API 请求失败：LuCI 会话可能已过期，请刷新页面重新登录');
+                // 非 JSON：通常是 LuCI 会话过期返回登录页，自动刷新去重新登录
+                setTimeout(function () { location.reload(); }, 500);
+                throw new Error('LuCI 会话已过期，正在跳转登录...');
             });
         });
     }
@@ -501,7 +502,7 @@
                 '<div style="margin-top:12px">' +
                 '<button class="nodex-btn nodex-btn-primary" onclick="window.nodexSavePanel()">保存配置</button> ' +
                 '<button class="nodex-btn" onclick="window.nodexTestPanel()">测试面板连接</button></div></div>';
-        });
+        }).catch(function (e) { el.innerHTML = '<div class="nodex-err">' + esc(e.message) + '</div>'; });
     }
 
     window.nodexSavePanel = function () {
@@ -547,7 +548,7 @@
                 '<div class="nodex-field"><label>新密码</label><input type="password" id="nx-pwd" style="width:280px"></div>' +
                 '<button class="nodex-btn" onclick="window.nodexChangePwd()">修改密码</button></div>';
             loadCoreInfo();
-        });
+        }).catch(function (e) { el.innerHTML = '<div class="nodex-err">' + esc(e.message) + '</div>'; });
     }
 
     function loadCoreInfo() {
@@ -620,7 +621,7 @@
             setInterval(function () {
                 if (document.getElementById('nx-log-pre')) window.nodexLoadLogs();
             }, 10000);
-        });
+        }).catch(function (e) { el.innerHTML = '<div class="nodex-err">' + esc(e.message) + '</div>'; });
     }
 
     window.nodexLoadLogs = function () {
