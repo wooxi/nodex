@@ -3,8 +3,14 @@ package manager
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -178,9 +184,10 @@ func (m *Manager) Status() []map[string]any {
 // Status 单节点状态
 func (rt *Runtime) Status() map[string]any {
 	return map[string]any{
-		"id":      rt.Cfg.ID,
-		"name":    rt.Cfg.Name,
-		"enabled": rt.Cfg.Enabled,
+		"id":       rt.Cfg.ID,
+		"name":     rt.Cfg.Name,
+		"enabled":  rt.Cfg.Enabled,
+		"protocol": rt.Cfg.Node.Protocol,
 		"xray": map[string]any{
 			"running": rt.Xray.IsRunning(),
 			"version": rt.Xray.Version(),
@@ -193,6 +200,89 @@ func (rt *Runtime) Status() map[string]any {
 		},
 		"panel": rt.Syncer.Status(),
 	}
+}
+
+// CoreInfo 核心二进制信息（版本 + 安装状态）
+func (m *Manager) CoreInfo(kind string) map[string]any {
+	path := m.global.System.XrayPath
+	if kind == "hysteria" {
+		path = m.global.System.HysteriaPath
+	}
+	installed := false
+	if _, err := os.Stat(path); err == nil {
+		installed = true
+	}
+	ver := ""
+	if installed {
+		if kind == "xray" {
+			out, err := exec.Command(path, "version").Output()
+			if err == nil {
+				ver = strings.SplitN(string(out), "\n", 2)[0]
+			}
+		} else {
+			out, err := exec.Command(path, "version").Output()
+			if err == nil {
+				for _, line := range strings.Split(string(out), "\n") {
+					if strings.Contains(line, "Version") {
+						ver = strings.TrimSpace(line)
+						break
+					}
+				}
+			}
+		}
+	}
+	return map[string]any{
+		"installed": installed,
+		"version":   ver,
+		"path":      path,
+	}
+}
+
+// UpdateCore 下载并更新核心二进制（nodex release 统一托管）
+func (m *Manager) UpdateCore(kind string) (string, error) {
+	if kind != "xray" && kind != "hysteria" {
+		return "", fmt.Errorf("未知核心类型: %s", kind)
+	}
+	// 停止全部节点（核心文件在被使用）
+	m.StopAll()
+	defer func() {
+		m.StartAll()
+	}()
+
+	url := fmt.Sprintf("https://github.com/wooxi/nodex/releases/latest/download/%s-linux-amd64", kind)
+	tmp := filepath.Join(os.TempDir(), "nodex-core-"+kind)
+	resp, err := http.Get(url)
+	if err != nil {
+		return "", fmt.Errorf("下载失败: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("下载失败: HTTP %d", resp.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 100<<20))
+	if err != nil {
+		return "", fmt.Errorf("读取下载内容失败: %v", err)
+	}
+	if len(data) < 4 || string(data[:4]) == "404 " || string(data[:9]) == "Not Found" {
+		return "", fmt.Errorf("下载内容无效（可能版本不存在）")
+	}
+	// ELF 校验
+	if len(data) < 4 || data[0] != 0x7f || data[1] != 'E' || data[2] != 'L' || data[3] != 'F' {
+		return "", fmt.Errorf("下载内容不是有效的可执行文件")
+	}
+	if err := os.WriteFile(tmp, data, 0o755); err != nil {
+		return "", fmt.Errorf("写入失败: %v", err)
+	}
+	path := m.global.System.XrayPath
+	if kind == "hysteria" {
+		path = m.global.System.HysteriaPath
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return "", fmt.Errorf("替换失败: %v", err)
+	}
+	os.Chmod(path, 0o755)
+	info := m.CoreInfo(kind)
+	return info["version"].(string), nil
 }
 
 // Users 单节点用户流量（xray + hy2 合并）

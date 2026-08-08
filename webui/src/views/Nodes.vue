@@ -6,9 +6,10 @@
         <el-button type="primary" size="small" style="margin-left:auto" :icon="Plus" @click="addNode">新增节点</el-button>
       </div>
       <el-table :data="nodes" v-loading="loading" empty-text="暂无节点，点击右上角新增">
-        <el-table-column label="节点" min-width="180">
+        <el-table-column label="节点" min-width="200">
           <template #default="{ row }">
             <div class="node-name">
+              <el-tag type="primary" size="small" effect="plain" style="margin-right:6px">{{ protoLabel(row.protocol) }}</el-tag>
               <el-tag :type="row.enabled ? (row.xray.running ? 'success' : 'warning') : 'info'" size="small" style="margin-right:6px">
                 {{ row.enabled ? (row.xray.running ? '运行中' : '已停止') : '已禁用' }}
               </el-tag>
@@ -59,6 +60,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Collection, Plus, Edit, Delete, CircleCheck } from '@element-plus/icons-vue'
 import { api } from '../api'
 
+const PROTO_LABELS = { vless: 'VLESS', vmess: 'VMess', trojan: 'Trojan', shadowsocks: 'SS', hysteria2: 'Hysteria2' }
+const protoLabel = (p) => PROTO_LABELS[p] || p || '未知'
 const nodes = ref([])
 const loading = ref(false)
 

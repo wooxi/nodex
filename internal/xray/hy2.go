@@ -167,7 +167,11 @@ func (m *Hy2Manager) Stop() error {
 }
 
 func (m *Hy2Manager) Version() string {
-	out, err := exec.Command(m.global.System.HysteriaPath, "version").Output()
+	bin := m.global.System.HysteriaPath
+	if _, err := os.Stat(bin); err != nil {
+		return "未安装"
+	}
+	out, err := exec.Command(bin, "version").Output()
 	if err != nil {
 		return "未知"
 	}

@@ -53,6 +53,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/config", s.auth(s.handleConfig))
 	mux.HandleFunc("/api/nodes/test", s.auth(s.handlePanelTest))
 	mux.HandleFunc("/api/action", s.auth(s.handleAction))
+	mux.HandleFunc("/api/core/update", s.auth(s.handleCoreUpdate))
+	mux.HandleFunc("/api/core/info", s.auth(s.handleCoreInfo))
 	mux.HandleFunc("/api/logs", s.auth(s.handleLogs))
 	mux.HandleFunc("/api/users", s.auth(s.handleUsers))
 	mux.HandleFunc("/api/generate", s.auth(s.handleGenerate))
@@ -198,11 +200,12 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		newCfg.EnsureDefaults()
-		// 停止旧运行时
+		// 停止旧运行时，重建并自动启动（保存即生效）
 		s.mgr.StopAll()
 		s.cfg = &newCfg
 		s.saveConfig()
 		s.mgr.Rebuild(s.cfg)
+		s.mgr.StartAll()
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "config": s.cfg})
 	default:
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method"})
@@ -381,6 +384,36 @@ func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"users": rt.Users(ctx)})
+}
+
+// handleCoreInfo 核心二进制信息
+func (s *Server) handleCoreInfo(w http.ResponseWriter, r *http.Request) {
+	kind := r.URL.Query().Get("type")
+	if kind == "" {
+		kind = "xray"
+	}
+	writeJSON(w, http.StatusOK, s.mgr.CoreInfo(kind))
+}
+
+// handleCoreUpdate 下载更新核心
+func (s *Server) handleCoreUpdate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method"})
+		return
+	}
+	var req struct {
+		Type string `json:"type"` // xray | hysteria
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || (req.Type != "xray" && req.Type != "hysteria") {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "type 必须为 xray 或 hysteria"})
+		return
+	}
+	ver, err := s.mgr.UpdateCore(req.Type)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "version": ver})
 }
 
 func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {

@@ -29,6 +29,7 @@
       <div class="card-title"><el-icon><Connection /></el-icon>节点状态</div>
       <div v-for="n in status.nodes || []" :key="n.id" class="node-row">
         <div class="node-info">
+          <el-tag type="primary" size="small" effect="plain">{{ protoLabel(n.protocol) }}</el-tag>
           <el-tag :type="n.enabled ? (n.xray.running ? 'success' : 'warning') : 'info'" size="small">
             {{ n.enabled ? (n.xray.running ? '运行中' : '已停止') : '已禁用' }}
           </el-tag>
@@ -89,6 +90,9 @@ function shortVer(v) {
   if (!v || v === '未知') return v || '未知'
   return v.split(' ')[0] || v
 }
+
+const PROTO_LABELS = { vless: 'VLESS', vmess: 'VMess', trojan: 'Trojan', shadowsocks: 'SS', hysteria2: 'Hysteria2' }
+function protoLabel(p) { return PROTO_LABELS[p] || p || '未知' }
 
 async function refresh() {
   try {

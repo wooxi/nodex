@@ -183,6 +183,9 @@ func (m *Manager) Restart() error {
 // Version 获取 xray 版本
 func (m *Manager) Version() string {
 	bin := m.global.System.XrayPath
+	if _, err := os.Stat(bin); err != nil {
+		return "未安装"
+	}
 	out, err := exec.Command(bin, "version").Output()
 	if err != nil {
 		return "未知"

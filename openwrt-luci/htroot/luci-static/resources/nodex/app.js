@@ -101,13 +101,30 @@
             var total = users.reduce(function (s, u) { return s + (u.traffic || 0); }, 0);
             var online = users.filter(function (u) { return u.ips && u.ips.length; }).length;
 
+            function protoTag(p) {
+                var map = { vless: 'VLESS', vmess: 'VMess', trojan: 'Trojan', shadowsocks: 'SS', hysteria2: 'Hysteria2' };
+                return '<span class="nodex-tag nodex-tag-off">' + (map[p] || esc(p || '未知')) + '</span>';
+            }
+            function nodeState(n) {
+                var ok = (n.xray && n.xray.running) || (n.hy2 && n.hy2.running);
+                return ok ? tag(true, '正常') : tag(false, '停止');
+            }
+            // 面板同步（公共项，聚合显示）
+            var panelErrs = nodes.filter(function (n) { return n.panel && n.panel.lastError; });
+            var panelOk = nodes.length > 0 && panelErrs.length === 0;
+            var lastSync = '';
+            nodes.forEach(function (n) { if (n.panel && n.panel.lastSync) lastSync = n.panel.lastSync; });
+            var panelHtml = nodes.length === 0
+                ? '<span class="nodex-tag nodex-tag-off">未配置</span>'
+                : (panelOk
+                    ? '<span class="nodex-tag nodex-tag-ok">正常</span>'
+                    : '<span class="nodex-tag nodex-tag-err" title="' + esc(panelErrs.map(function (n) { return n.name + ': ' + n.panel.lastError; }).join('\n')) + '">错误</span>');
+
             var rows = nodes.map(function (n) {
                 return '<tr>' +
-                    '<td>' + tag(n.xray && n.xray.running, (n.xray && n.xray.running) ? '运行中' : '已停止') + ' <b>' + esc(n.name) + '</b> <span style="color:#999">' + esc(n.id) + '</span></td>' +
-                    '<td>' + esc(n.xray ? n.xray.version.split(' ')[0] : '-') + '</td>' +
-                    '<td>' + (n.hy2 && n.hy2.running ? tag(true, '运行中') : tag(false, '停止')) + '</td>' +
-                    '<td>' + (n.panel && n.panel.lastError ? '<span class="nodex-tag nodex-tag-err" title="' + esc(n.panel.lastError) + '">错误</span>' : '<span class="nodex-tag nodex-tag-ok">正常</span>') + '</td>' +
-                    '<td>' + esc((n.panel && n.panel.lastSync) || '-') + '</td>' +
+                    '<td><b>' + esc(n.name) + '</b> <span style="color:#999">' + esc(n.id) + '</span></td>' +
+                    '<td>' + protoTag(n.protocol) + '</td>' +
+                    '<td>' + nodeState(n) + '</td>' +
                     '<td><button class="nodex-btn" onclick="window.nodexRestart(\'' + n.id + '\')">重启</button>' +
                     '<a class="nodex-btn" href="#nodeedit/' + n.id + '">配置</a></td>' +
                     '</tr>';
@@ -117,9 +134,12 @@
                 '<div class="nodex-card"><h3>总览</h3>' +
                 '<table class="nodex-table"><tr><th>节点数</th><th>运行中</th><th>在线用户</th><th>总流量</th></tr>' +
                 '<tr><td>' + nodes.length + '</td><td>' + (st.running || 0) + '</td><td>' + online + '</td><td>' + fmtBytes(total) + '</td></tr></table></div>' +
+                '<div class="nodex-card"><h3>面板同步（公共）</h3>' +
+                '<table class="nodex-table"><tr><th>状态</th><th>上次同步</th></tr>' +
+                '<tr><td>' + panelHtml + '</td><td>' + esc(lastSync || '-') + '</td></tr></table></div>' +
                 '<div class="nodex-card"><h3>节点状态</h3>' +
-                '<table class="nodex-table"><tr><th>节点</th><th>Xray</th><th>Hysteria2</th><th>面板同步</th><th>上次同步</th><th>操作</th></tr>' +
-                (rows || '<tr><td colspan="6">暂无节点</td></tr>') + '</table></div>' +
+                '<table class="nodex-table"><tr><th>节点</th><th>节点类型</th><th>节点状态</th><th>操作</th></tr>' +
+                (rows || '<tr><td colspan="4">暂无节点</td></tr>') + '</table></div>' +
                 '<div class="nodex-card"><h3>用户流量</h3>' +
                 '<table class="nodex-table"><tr><th>节点</th><th>用户</th><th>流量</th><th>在线 IP</th></tr>' +
                 (users.map(function (u) {
@@ -141,11 +161,19 @@
         el.innerHTML = '<div style="color:#999">加载中...</div>';
         api('/status').then(function (st) {
             var nodes = st.nodes || [];
+            function protoTag(p) {
+                var map = { vless: 'VLESS', vmess: 'VMess', trojan: 'Trojan', shadowsocks: 'SS', hysteria2: 'Hysteria2' };
+                return '<span class="nodex-tag nodex-tag-off">' + (map[p] || esc(p || '未知')) + '</span>';
+            }
+            function nodeState(n) {
+                var ok = (n.xray && n.xray.running) || (n.hy2 && n.hy2.running);
+                return ok ? tag(true, '正常') : tag(false, '停止');
+            }
             var rows = nodes.map(function (n) {
                 return '<tr>' +
-                    '<td>' + tag(n.enabled && n.xray && n.xray.running, n.enabled ? ((n.xray && n.xray.running) ? '运行中' : '已停止') : '已禁用') + ' <b>' + esc(n.name) + '</b> <span style="color:#999">' + esc(n.id) + '</span></td>' +
-                    '<td>' + (n.xray && n.xray.running ? '运行中' : '已停止') + '</td>' +
-                    '<td>' + (n.hy2 && n.hy2.running ? '运行中' : '已停止') + '</td>' +
+                    '<td><b>' + esc(n.name) + '</b> <span style="color:#999">' + esc(n.id) + '</span></td>' +
+                    '<td>' + protoTag(n.protocol) + '</td>' +
+                    '<td>' + (n.enabled ? nodeState(n) : tag(false, '已禁用')) + '</td>' +
                     '<td><a class="nodex-btn" href="#nodeedit/' + n.id + '">编辑</a>' +
                     '<button class="nodex-btn nodex-btn-danger" onclick="window.nodexDelNode(\'' + n.id + '\',\'' + esc(n.name).replace(/'/g, "\\'") + '\')">删除</button></td>' +
                     '</tr>';
@@ -153,7 +181,7 @@
             el.innerHTML =
                 '<div class="nodex-card"><h3>节点管理</h3>' +
                 '<div style="margin-bottom:10px"><button class="nodex-btn nodex-btn-primary" onclick="window.nodexAddNode()">新增节点</button></div>' +
-                '<table class="nodex-table"><tr><th>节点</th><th>Xray</th><th>Hysteria2</th><th>操作</th></tr>' +
+                '<table class="nodex-table"><tr><th>节点</th><th>节点类型</th><th>节点状态</th><th>操作</th></tr>' +
                 (rows || '<tr><td colspan="4">暂无节点</td></tr>') + '</table></div>';
         }).catch(function (e) { el.innerHTML = '<div class="nodex-err">' + esc(e.message) + '</div>'; });
     }
@@ -193,7 +221,14 @@
         api('/config').then(function (cfg) {
             var node = (cfg.nodes || []).filter(function (n) { return n.id === id; })[0];
             if (!node) { el.innerHTML = '<div class="nodex-err">节点不存在</div>'; return; }
+            window.nodexEditNode = node;
+            renderNodeEditForm(node);
+        }).catch(function (e) { el.innerHTML = '<div class="nodex-err">' + esc(e.message) + '</div>'; });
+    }
 
+    function renderNodeEditForm(node) {
+        var el = document.getElementById('nodex-content');
+        var id = node.id;
             var proto = node.node.protocol;
             var protoBtns = PROTOCOLS.map(function (p) {
                 return '<span class="nodex-proto' + (p.value === proto ? ' active' : '') + '" onclick="window.nodexSetProto(\'' + id + '\',\'' + p.value + '\')">' + p.label + '</span>';
@@ -269,14 +304,14 @@
                 '<div style="margin-top:12px">' +
                 '<button class="nodex-btn nodex-btn-primary" onclick="window.nodexSaveNode(\'' + id + '\',false)">保存配置</button> ' +
                 '<button class="nodex-btn" onclick="window.nodexSaveNode(\'' + id + '\',true)">保存并重启</button></div></div>';
-        }).catch(function (e) { el.innerHTML = '<div class="nodex-err">' + esc(e.message) + '</div>'; });
     }
 
     window.nodexSetProto = function (id, proto) {
-        api('/config').then(function (cfg) {
-            var node = (cfg.nodes || []).filter(function (n) { return n.id === id; })[0];
-            if (node) { node.node.protocol = proto; return api('/config', { method: 'PUT', body: cfg }); }
-        }).then(function () { renderNodeEdit(id); });
+        // 本地切换协议（不闪屏）：直接改当前节点对象并重渲染表单
+        if (window.nodexEditNode && window.nodexEditNode.id === id) {
+            window.nodexEditNode.node.protocol = proto;
+            renderNodeEditForm(window.nodexEditNode);
+        }
     };
 
     window.nodexGen = function (id, gen, key) {
@@ -316,7 +351,10 @@
                 else v = el.value;
                 var parts = key.split('.');
                 var cur = node;
-                for (var i = 1; i < parts.length - 1; i++) cur = cur[parts[i]];
+                for (var i = 1; i < parts.length - 1; i++) {
+                    if (cur[parts[i]] == null) cur[parts[i]] = {};
+                    cur = cur[parts[i]];
+                }
                 cur[parts[parts.length - 1]] = v;
             });
             return api('/config', { method: 'PUT', body: cfg });
@@ -387,8 +425,8 @@
             var s = cfg.system || {};
             el.innerHTML =
                 '<div class="nodex-card"><h3>系统设置（全局）</h3>' +
-                '<div class="nodex-field"><label>xray 路径</label><input type="text" id="nx-s-xray" value="' + esc(s.xray_path || '') + '"></div>' +
-                '<div class="nodex-field"><label>hysteria 路径</label><input type="text" id="nx-s-hy" value="' + esc(s.hysteria_path || '') + '"></div>' +
+                '<div class="nodex-field"><label>xray 路径</label><input type="text" id="nx-s-xray" value="' + esc(s.xray_path || '') + '"> <span id="nx-core-xray">检测中...</span></div>' +
+                '<div class="nodex-field"><label>hysteria 路径</label><input type="text" id="nx-s-hy" value="' + esc(s.hysteria_path || '') + '"> <span id="nx-core-hy">检测中...</span></div>' +
                 '<div class="nodex-field"><label>日志级别</label><select id="nx-s-log">' +
                 ['debug', 'info', 'warning', 'error'].map(function (l) {
                     return '<option value="' + l + '"' + (s.log_level === l ? ' selected' : '') + '>' + l + '</option>';
@@ -399,8 +437,39 @@
                 '<div class="nodex-card"><h3>修改管理密码</h3>' +
                 '<div class="nodex-field"><label>新密码</label><input type="password" id="nx-pwd" style="width:280px"></div>' +
                 '<button class="nodex-btn" onclick="window.nodexChangePwd()">修改密码</button></div>';
+            loadCoreInfo();
         });
     }
+
+    function loadCoreInfo() {
+        ['xray', 'hysteria'].forEach(function (kind) {
+            var el = document.getElementById('nx-core-' + (kind === 'xray' ? 'xray' : 'hy'));
+            if (!el) return;
+            api('/core/info?type=' + kind).then(function (info) {
+                var name = kind === 'xray' ? 'xray' : 'hysteria';
+                if (info.installed) {
+                    el.innerHTML = ' <span class="nodex-tag nodex-tag-ok">' + esc((info.version || '').split(' ')[0]) + '</span>' +
+                        ' <button class="nodex-btn" onclick="window.nodexUpdateCore(\'' + kind + '\')">更新</button>';
+                } else {
+                    el.innerHTML = ' <span class="nodex-tag nodex-tag-err">未安装</span>' +
+                        ' <button class="nodex-btn nodex-btn-primary" onclick="window.nodexUpdateCore(\'' + kind + '\')">下载</button>';
+                }
+            }).catch(function () {
+                el.innerHTML = ' <span class="nodex-tag nodex-tag-err">未知</span>';
+            });
+        });
+    }
+
+    window.nodexUpdateCore = function (kind) {
+        var name = kind === 'xray' ? 'xray' : 'hysteria';
+        if (!confirm('将下载最新版 ' + name + ' 核心并替换（节点会短暂重启），继续？')) return;
+        api('/core/update', { body: { type: kind } }).then(function (res) {
+            notify(name + ' 已更新至 ' + (res.version || '最新版'), true);
+            loadCoreInfo();
+        }).catch(function (e) {
+            notify(e.message || '更新失败', false);
+        });
+    };
 
     window.nodexSaveSystem = function () {
         api('/config').then(function (c) {

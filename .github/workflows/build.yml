@@ -64,6 +64,11 @@ jobs:
           cp sdk/bin/packages/x86_64/*/nodex_*.ipk dist/ 2>/dev/null || true
           cp sdk/bin/packages/*/*/luci-app-nodex_*.ipk dist/ 2>/dev/null || true
           cp openwrt/files/nodex dist/nodex-linux-amd64
+          # 托管核心二进制（与项目统一发布，供一键下载/更新）
+          curl -sL -o dist/xray-linux-amd64 https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip && \
+            (cd dist && unzip -o -q xray-linux-amd64 xray && mv xray xray-linux-amd64 && rm -f xray-linux-amd64.zip || true)
+          curl -sL -o dist/hysteria-linux-amd64 https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-amd64
+          chmod +x dist/*-linux-amd64 2>/dev/null || true
           ls -la dist/
 
       - name: Upload artifact

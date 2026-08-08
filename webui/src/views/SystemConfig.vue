@@ -9,9 +9,17 @@
         </el-form-item>
         <el-form-item label="xray 路径">
           <el-input v-model="form.system.xray_path" style="width:320px" />
+          <span v-if="cores.xray" class="core-info">
+            <el-tag :type="cores.xray.installed ? 'success' : 'danger'" size="small">{{ cores.xray.installed ? cores.xray.version.split(' ')[0] : '未安装' }}</el-tag>
+            <el-button size="small" :loading="updating === 'xray'" @click="updateCore('xray')">{{ cores.xray.installed ? '更新' : '下载' }}</el-button>
+          </span>
         </el-form-item>
         <el-form-item label="hysteria 路径">
           <el-input v-model="form.system.hysteria_path" style="width:320px" />
+          <span v-if="cores.hysteria" class="core-info">
+            <el-tag :type="cores.hysteria.installed ? 'success' : 'danger'" size="small">{{ cores.hysteria.installed ? (cores.hysteria.version.split(' ')[1] || cores.hysteria.version.split(' ')[0]) : '未安装' }}</el-tag>
+            <el-button size="small" :loading="updating === 'hysteria'" @click="updateCore('hysteria')">{{ cores.hysteria.installed ? '更新' : '下载' }}</el-button>
+          </span>
         </el-form-item>
         <el-form-item label="日志级别">
           <el-select v-model="form.system.log_level" style="width:200px">
@@ -78,6 +86,31 @@ const form = reactive({
 const newPwd = ref('')
 const saving = ref(false)
 const changing = ref(false)
+const cores = ref({})
+const updating = ref('')
+
+async function loadCores() {
+  try {
+    const [x, h] = await Promise.all([
+      api.get('/api/core/info?type=xray'),
+      api.get('/api/core/info?type=hysteria')
+    ])
+    cores.value = { xray: x, hysteria: h }
+  } catch (e) {}
+}
+
+async function updateCore(kind) {
+  updating.value = kind
+  try {
+    const res = await api.post('/api/core/update', { type: kind })
+    ElMessage.success(`${kind} 已更新至 ${res.version}`)
+    loadCores()
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    updating.value = ''
+  }
+}
 
 onMounted(async () => {
   try {
@@ -85,6 +118,7 @@ onMounted(async () => {
     Object.assign(form.web, cfg.web)
     Object.assign(form.system, cfg.system)
   } catch (e) {}
+  loadCores()
 })
 
 async function save() {
