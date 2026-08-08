@@ -26,7 +26,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 
 # xray / hysteria 内核（与 OpenWrt 部署同版本）
 ARG XRAY_VERSION=v26.3.27
-ARG HYSTERIA_VERSION=v2.12.0
+ARG HYSTERIA_VERSION=app/v2.12.0
 RUN curl -sL -o /tmp/xray.zip https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/Xray-linux-64.zip \
     && unzip -o /tmp/xray.zip -d /tmp/xray-ext xray && mv /tmp/xray-ext/xray /usr/bin/xray && chmod +x /usr/bin/xray \
     && curl -sL -o /usr/bin/hysteria https://github.com/apernet/hysteria/releases/download/${HYSTERIA_VERSION}/hysteria-linux-amd64 \
