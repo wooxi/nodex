@@ -267,16 +267,8 @@ func (m *Manager) BuildConfig() ([]byte, error) {
 			},
 		},
 		"inbounds":  []any{},
-		"outbounds": []any{map[string]any{"protocol": "freedom", "tag": "direct"}},
-		"routing": map[string]any{
-			"rules": []any{
-				map[string]any{
-					"inboundTag": []string{"api"},
-					"outboundTag": "direct",
-					"type": "field",
-				},
-			},
-		},
+		"outbounds": m.buildOutbounds(),
+		"routing":   m.buildRouting(),
 	}
 
 	inbounds := []any{}
@@ -298,6 +290,93 @@ func (m *Manager) BuildConfig() ([]byte, error) {
 	_ = probe
 
 	return json.MarshalIndent(out, "", "  ")
+}
+
+// buildOutbounds 出站：转发模式生成 vless+ws+tls 出站（含负载均衡），否则直连
+func (m *Manager) buildOutbounds() []any {
+	fwd := m.cfg.Forward
+	if !fwd.Enabled || len(fwd.Targets) == 0 {
+		return []any{map[string]any{"protocol": "freedom", "tag": "direct"}}
+	}
+	fingerprint := fwd.Fingerprint
+	if fingerprint == "" {
+		fingerprint = "chrome"
+	}
+	port := fwd.Targets[0].Port
+	if port == 0 {
+		port = 443
+	}
+	outbounds := []any{}
+	for i, t := range fwd.Targets {
+		p := t.Port
+		if p == 0 {
+			p = port
+		}
+		outbounds = append(outbounds, map[string]any{
+			"tag":      fmt.Sprintf("forward-%d", i),
+			"protocol": "vless",
+			"settings": map[string]any{
+				"vnext": []any{map[string]any{
+					"address":    t.Address,
+					"port":       p,
+					"users":      []any{map[string]any{
+						"id":         fwd.UUID,
+						"security":   "auto",
+						"encryption": "none",
+					}},
+				}},
+			},
+			"streamSettings": map[string]any{
+				"network": "ws",
+				"security": "tls",
+				"tlsSettings": map[string]any{
+					"allowInsecure": false,
+					"serverName":    fwd.ServerName,
+					"fingerprint":   fingerprint,
+				},
+				"wsSettings": map[string]any{
+					"path": fwd.WSPath,
+					"headers": map[string]any{
+						"Host": fwd.WSHost,
+					},
+				},
+			},
+		})
+	}
+	// 保留直连（API 用）
+	outbounds = append(outbounds, map[string]any{"protocol": "freedom", "tag": "direct"})
+	return outbounds
+}
+
+// buildRouting 路由：转发模式用 balancer 负载均衡，否则默认路由
+func (m *Manager) buildRouting() map[string]any {
+	fwd := m.cfg.Forward
+	rules := []any{
+		map[string]any{
+			"inboundTag": []string{"api"},
+			"outboundTag": "direct",
+			"type":       "field",
+		},
+	}
+	if fwd.Enabled && len(fwd.Targets) > 0 {
+		selector := []string{}
+		for i := range fwd.Targets {
+			selector = append(selector, fmt.Sprintf("forward-%d", i))
+		}
+		return map[string]any{
+			"balancers": []any{map[string]any{
+				"tag":      "balancer",
+				"selector": selector,
+				"strategy": map[string]any{"type": "random"},
+			}},
+			"rules": append(rules, map[string]any{
+				"inboundTag": []string{"in-main"},
+				"balancerTag": "balancer",
+				"type":       "field",
+			}),
+		}
+	}
+	return map[string]any{"rules": rules}
 }
 
 // buildLocalInbound 本地模式：按表单配置生成单个入站（hysteria2 由独立进程管理，不进 xray）

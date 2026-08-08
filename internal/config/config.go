@@ -43,6 +43,25 @@ type Node struct {
 	NodeID   int        `json:"node_id"`  // 面板节点 ID（每节点不同）
 	NodeType string     `json:"node_type"` // 面板节点类型，留空自动
 	Node     NodeConfig `json:"node"`     // 协议配置
+	Forward  Forward    `json:"forward"`  // 转发出站（XrayR 转发模式）
+}
+
+// Forward 转发出站配置：面板入站流量转发到落地节点（vless+ws+tls）
+type Forward struct {
+	Enabled     bool          `json:"enabled"`      // 启用转发（替代直连）
+	Targets     []ForwardTarget `json:"targets"`    // 目标服务器（负载均衡）
+	UUID        string        `json:"uuid"`         // 落地节点 UUID
+	ServerName  string        `json:"server_name"`  // SNI
+	WSPath      string        `json:"ws_path"`      // WebSocket 路径
+	WSHost      string        `json:"ws_host"`      // WebSocket Host 头
+	Fingerprint string        `json:"fingerprint"`  // 指纹，默认 chrome
+}
+
+// ForwardTarget 转发目标服务器
+type ForwardTarget struct {
+	Address string `json:"address"` // IP 或域名
+	Port    int    `json:"port"`    // 端口，默认 443
+	Weight  int    `json:"weight"`  // 负载权重，默认 1
 }
 
 type PanelConfig struct {
@@ -118,6 +137,7 @@ func DefaultNode() *Node {
 		ID:      newID(),
 		Name:    "新节点",
 		Enabled: true,
+		Forward: Forward{Fingerprint: "chrome"},
 		Node: NodeConfig{
 			Protocol: "vless",
 			Port:     8686,

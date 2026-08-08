@@ -179,6 +179,35 @@
         </el-form-item>
       </el-form>
     </div>
+
+    <!-- 转发出站 -->
+    <div class="card">
+      <div class="card-title"><el-icon><Share /></el-icon>转发出站（XrayR 转发模式）</div>
+      <el-form label-width="130px" style="max-width:720px">
+        <el-form-item label="启用转发">
+          <el-switch v-model="form.forward.enabled" />
+          <span class="tip">入站流量转发到落地节点（替代直连）</span>
+        </el-form-item>
+        <template v-if="form.forward.enabled">
+          <el-form-item label="落地 UUID" required>
+            <el-input v-model="form.forward.uuid" style="width:340px" placeholder="落地节点 VLESS UUID" />
+          </el-form-item>
+          <el-form-item label="SNI" required>
+            <el-input v-model="form.forward.server_name" style="width:340px" placeholder="chongya.ccwu.cc" />
+          </el-form-item>
+          <el-form-item label="WS 路径">
+            <el-input v-model="form.forward.ws_path" style="width:340px" placeholder="/proxyip=..." />
+          </el-form-item>
+          <el-form-item label="WS Host">
+            <el-input v-model="form.forward.ws_host" style="width:340px" placeholder="chongya.ccwu.cc" />
+          </el-form-item>
+          <el-form-item label="目标服务器">
+            <el-input v-model="targetsText" type="textarea" :rows="5" style="width:340px" placeholder="每行一个：IP 或 IP:端口 或 IP:端口:权重" />
+          </el-form-item>
+          <div class="tip" style="margin-left:130px">多目标自动负载均衡（随机）</div>
+        </template>
+      </el-form>
+    </div>
   </div>
 </template>
 
@@ -207,6 +236,7 @@ const form = ref(null)
 const saving = ref(false)
 const testing = ref(false)
 const panelEnabled = ref(false)
+const targetsText = ref('')
 
 async function testPanel() {
   testing.value = true
@@ -229,12 +259,20 @@ onMounted(async () => {
     const n = cfg.nodes.find(x => x.id === route.params.id)
     if (!n) { ElMessage.error('节点不存在'); return }
     form.value = reactive(JSON.parse(JSON.stringify(n)))
+    // 确保 forward 存在
+    if (!form.value.forward) form.value.forward = { enabled: false, targets: [], fingerprint: 'chrome' }
+    targetsText.value = (form.value.forward.targets || []).map(t => t.address + (t.port ? ':' + t.port : '') + (t.weight && t.weight !== 1 ? ':' + t.weight : '')).join('\n')
   } catch (e) { ElMessage.error(e.message) }
 })
 
 async function save(restart = false) {
   saving.value = true
   try {
+    // 解析目标服务器列表
+    form.value.forward.targets = targetsText.value.split('\n').map(ln => ln.trim()).filter(Boolean).map(ln => {
+      const parts = ln.split(':')
+      return { address: parts[0], port: parseInt(parts[1], 10) || 0, weight: parseInt(parts[2], 10) || 1 }
+    })
     const cfg = await api.get('/api/config')
     const idx = cfg.nodes.findIndex(x => x.id === form.value.id)
     if (idx < 0) throw new Error('节点不存在')

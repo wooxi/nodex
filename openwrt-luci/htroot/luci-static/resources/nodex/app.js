@@ -349,7 +349,15 @@
                 '<div class="nodex-field"><label></label><button class="nodex-btn" onclick="window.nodexTestNodePanel(\'' + id + '\')">测试面板连接</button></div>' +
                 '<div style="color:#999;font-size:12px;margin-top:4px">提示：面板模式下监听端口、传输网络均自动同步面板节点配置</div></div>' +
                 '<div class="nodex-card"><h3>协议</h3><div>' + protoBtns + '</div></div>' +
-                '<div class="nodex-card"><h3>协议配置</h3>' + fields +
+                '<div class="nodex-card"><h3>协议配置</h3>' + fields + '</div>' +
+                '<div class="nodex-card"><h3>转发出站（XrayR 转发模式）</h3>' +
+                '<div class="nodex-field"><label>启用转发</label><input type="checkbox" id="nx-fwd-enabled"' + ((node.forward && node.forward.enabled) ? ' checked' : '') + '></div>' +
+                '<div class="nodex-field"><label>落地 UUID</label><input type="text" id="nx-fwd-uuid" value="' + esc((node.forward && node.forward.uuid) || '') + '" style="width:340px"></div>' +
+                '<div class="nodex-field"><label>SNI</label><input type="text" id="nx-fwd-sni" value="' + esc((node.forward && node.forward.server_name) || '') + '" style="width:340px"></div>' +
+                '<div class="nodex-field"><label>WS 路径</label><input type="text" id="nx-fwd-wspath" value="' + esc((node.forward && node.forward.ws_path) || '') + '" style="width:340px"></div>' +
+                '<div class="nodex-field"><label>WS Host</label><input type="text" id="nx-fwd-wshost" value="' + esc((node.forward && node.forward.ws_host) || '') + '" style="width:340px"></div>' +
+                '<div class="nodex-field"><label>目标服务器</label><textarea id="nx-fwd-targets" rows="5" style="width:340px;vertical-align:top;font-family:monospace;font-size:12px" placeholder="每行一个：IP 或 IP:端口 或 IP:端口:权重">' + esc((node.forward && node.forward.targets || []).map(function (t) { return t.address + (t.port ? ':' + t.port : '') + (t.weight && t.weight !== 1 ? ':' + t.weight : ''); }).join('\n')) + '</textarea></div>' +
+                '<div style="color:#999;font-size:12px">启用后入站流量转发到落地节点（vless+ws+tls），代替直连；多目标自动负载均衡</div>' +
                 '<div style="margin-top:12px">' +
                 '<button class="nodex-btn nodex-btn-primary" onclick="window.nodexSaveNode(\'' + id + '\',false)">保存配置</button> ' +
                 '<button class="nodex-btn" onclick="window.nodexSaveNode(\'' + id + '\',true)">保存并重启</button></div></div>';
@@ -374,6 +382,29 @@
             window.nodexEditNode.enabled = enEl.checked;
             if (nidEl) window.nodexEditNode.node_id = parseInt(nidEl.value, 10) || 0;
             if (ntypeEl) window.nodexEditNode.node_type = ntypeEl.value;
+            // 转发出站
+            var fwd = window.nodexEditNode.forward || (window.nodexEditNode.forward = {});
+            var fe = document.getElementById('nx-fwd-enabled');
+            if (fe) {
+                fwd.enabled = fe.checked;
+                fwd.uuid = document.getElementById('nx-fwd-uuid').value;
+                fwd.server_name = document.getElementById('nx-fwd-sni').value;
+                fwd.ws_path = document.getElementById('nx-fwd-wspath').value;
+                fwd.ws_host = document.getElementById('nx-fwd-wshost').value;
+                fwd.fingerprint = fwd.fingerprint || 'chrome';
+                // 解析目标列表：每行 IP 或 IP:port 或 IP:port:weight
+                fwd.targets = [];
+                var lines = document.getElementById('nx-fwd-targets').value.split('\n');
+                lines.forEach(function (ln) {
+                    ln = ln.trim();
+                    if (!ln) return;
+                    var parts = ln.split(':');
+                    var t = { address: parts[0], port: 0, weight: 1 };
+                    if (parts.length > 1) t.port = parseInt(parts[1], 10) || 0;
+                    if (parts.length > 2) t.weight = parseInt(parts[2], 10) || 1;
+                    fwd.targets.push(t);
+                });
+            }
         }
     }
 
