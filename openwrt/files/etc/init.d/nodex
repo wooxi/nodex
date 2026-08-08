@@ -1,0 +1,28 @@
+#!/bin/sh /etc/rc.common
+# NodeX 节点管家 init 脚本
+START=99
+STOP=10
+USE_PROCD=1
+
+PROG=/usr/bin/nodex
+CONFIG=/etc/nodex/config.json
+
+start_service() {
+    procd_open_instance
+    procd_set_param command "$PROG" start
+    procd_set_param respawn
+    procd_set_param stdout 1
+    procd_set_param stderr 1
+    procd_set_param pidfile /var/run/nodex.pid
+    procd_close_instance
+}
+
+stop_service() {
+    "$PROG" stop
+}
+
+restart() {
+    stop
+    sleep 1
+    start
+}

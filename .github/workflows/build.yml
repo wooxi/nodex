@@ -1,0 +1,67 @@
+name: Build NodeX ipk
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+
+      - name: Build frontend
+        working-directory: webui
+        run: |
+          npm ci
+          npm run build
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Build nodex binary
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w" -o openwrt/files/nodex ./cmd/nodex
+
+      - name: Install OpenWrt SDK
+        run: |
+          wget -q https://downloads.openwrt.org/releases/23.05.5/targets/x86/64/openwrt-sdk-23.05.5-x86-64_gcc-12.3.0_musl.Linux-x86_64.tar.xz
+          tar xf openwrt-sdk-*.tar.xz
+          mv openwrt-sdk-* sdk
+
+      - name: Build ipk
+        run: |
+          cp -r openwrt/* sdk/package/nodex/
+          cd sdk
+          make package/nodex/compile V=s
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p dist
+          cp sdk/bin/packages/x86_64/*/nodex_*.ipk dist/ 2>/dev/null || true
+          cp openwrt/files/nodex dist/nodex-linux-amd64
+          ls -la dist/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nodex-ipk
+          path: dist/
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

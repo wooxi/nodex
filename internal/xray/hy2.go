@@ -1,0 +1,232 @@
+package xray
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/wooxi/nodex/internal/config"
+)
+
+// Hy2Manager 管理 hysteria2 进程（官方 hysteria 二进制）
+// 认证采用 auth.http 模式回调 NodeX，实现 per-user 流量统计：
+//   客户端 auth = 用户 uuid → NodeX 认证 API 返回 {ok, id: uid} → /traffic 按 uid 统计
+type Hy2Manager struct {
+	cfg   *config.Config
+	cmd   *exec.Cmd
+	users []User // uid -> uuid 映射
+}
+
+func NewHy2Manager(cfg *config.Config) *Hy2Manager {
+	return &Hy2Manager{cfg: cfg}
+}
+
+func (m *Hy2Manager) UpdateConfig(cfg *config.Config) { m.cfg = cfg }
+
+// SetUsers 注入用户列表（用于认证回调）
+func (m *Hy2Manager) SetUsers(users []User) { m.users = users }
+
+// AuthUser 认证回调：auth=uuid → 返回 uid
+func (m *Hy2Manager) AuthUser(auth string) (int64, bool) {
+	for _, u := range m.users {
+		if u.UUID == auth {
+			return u.ID, true
+		}
+	}
+	return 0, false
+}
+
+func (m *Hy2Manager) configPath() string { return filepath.Join(m.cfg.DataDir(), "hy2", "config.yaml") }
+func (m *Hy2Manager) logPath() string    { return filepath.Join(m.cfg.DataDir(), "hy2", "hy2.log") }
+func (m *Hy2Manager) pidFile() string    { return filepath.Join(m.cfg.DataDir(), "hy2", "hy2.pid") }
+
+func (m *Hy2Manager) IsRunning() bool {
+	if m.cmd != nil && m.cmd.Process != nil {
+		return m.cmd.ProcessState == nil || !m.cmd.ProcessState.Exited()
+	}
+	if data, err := os.ReadFile(m.pidFile()); err == nil {
+		if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
+			return syscall.Kill(pid, 0) == nil
+		}
+	}
+	return false
+}
+
+func (m *Hy2Manager) Pid() int {
+	if m.cmd != nil && m.cmd.Process != nil {
+		return m.cmd.Process.Pid
+	}
+	if data, err := os.ReadFile(m.pidFile()); err == nil {
+		pid, _ := strconv.Atoi(strings.TrimSpace(string(data)))
+		return pid
+	}
+	return 0
+}
+
+// BuildConfig 生成 hysteria2 服务器配置（YAML）
+func (m *Hy2Manager) BuildConfig(authURL, trafficSecret string) (string, error) {
+	cfg := m.cfg.Node.Hy2
+	var b strings.Builder
+	fmt.Fprintf(&b, "listen: 0.0.0.0:%d\n", cfg.Port)
+	fmt.Fprintf(&b, "tls:\n  cert: %s\n  key: %s\n", cfg.CertPath, cfg.KeyPath)
+	if cfg.IgnoreBW {
+		b.WriteString("ignoreClientBandwidth: true\n")
+	} else {
+		fmt.Fprintf(&b, "bandwidth:\n  up: %d mbps\n  down: %d mbps\n", cfg.UpMbps, cfg.DownMbps)
+	}
+	if cfg.Obfs != "" && cfg.Obfs != "none" {
+		fmt.Fprintf(&b, "obfs:\n  type: %s\n  salamander:\n    password: %s\n", cfg.Obfs, cfg.ObfsPassword)
+	}
+	// per-user 认证：HTTP 回调 NodeX
+	b.WriteString("auth:\n  type: http\n  http:\n    url: " + authURL + "\n")
+	// 流量统计 API
+	b.WriteString("trafficStats:\n")
+	fmt.Fprintf(&b, "  listen: 127.0.0.1:%d\n", 8444)
+	fmt.Fprintf(&b, "  secret: %s\n", trafficSecret)
+	return b.String(), nil
+}
+
+// Start 生成配置并启动 hysteria2
+func (m *Hy2Manager) Start(authURL, trafficSecret string) error {
+	if m.IsRunning() {
+		return nil
+	}
+	conf, err := m.BuildConfig(authURL, trafficSecret)
+	if err != nil {
+		return err
+	}
+	confPath := m.configPath()
+	if err := os.MkdirAll(filepath.Dir(confPath), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(confPath, []byte(conf), 0o600); err != nil {
+		return err
+	}
+	bin := m.cfg.Node.Hy2.BinPath
+	if _, err := os.Stat(bin); err != nil {
+		return fmt.Errorf("hysteria 可执行文件不存在: %s", bin)
+	}
+	logF, _ := os.OpenFile(m.logPath(), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	cmd := exec.Command(bin, "server", "-c", confPath)
+	cmd.Stdout = logF
+	cmd.Stderr = logF
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("启动 hysteria2 失败: %w", err)
+	}
+	m.cmd = cmd
+	os.WriteFile(m.pidFile(), []byte(strconv.Itoa(cmd.Process.Pid)), 0o644)
+	go cmd.Wait()
+	return nil
+}
+
+func (m *Hy2Manager) Stop() error {
+	if m.cmd != nil && m.cmd.Process != nil {
+		m.cmd.Process.Signal(syscall.SIGTERM)
+		done := make(chan struct{})
+		go func() { m.cmd.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			m.cmd.Process.Kill()
+		}
+		m.cmd = nil
+	} else if data, err := os.ReadFile(m.pidFile()); err == nil {
+		if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
+			syscall.Kill(pid, syscall.SIGTERM)
+		}
+	}
+	os.Remove(m.pidFile())
+	return nil
+}
+
+func (m *Hy2Manager) Version() string {
+	out, err := exec.Command(m.cfg.Node.Hy2.BinPath, "version").Output()
+	if err != nil {
+		return "未知"
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.Contains(line, "Version") {
+			return strings.TrimSpace(line)
+		}
+	}
+	return "未知"
+}
+
+// Hy2Traffic /traffic API 的单次结果
+type Hy2Traffic struct {
+	Tx int64 `json:"tx"`
+	Rx int64 `json:"rx"`
+}
+
+// FetchTraffic 从 hysteria /traffic API 拉取 per-user 流量（uid -> Traffic）
+func (m *Hy2Manager) FetchTraffic(ctx context.Context, secret string) (map[int64]Traffic, error) {
+	url := fmt.Sprintf("http://127.0.0.1:%d/traffic", 8444)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", secret)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, err
+	}
+	var raw map[string]Hy2Traffic
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, fmt.Errorf("解析 /traffic 失败: %w", err)
+	}
+	out := map[int64]Traffic{}
+	for key, t := range raw {
+		uid, err := strconv.ParseInt(key, 10, 64)
+		if err != nil {
+			continue
+		}
+		out[uid] = Traffic{Up: t.Tx, Down: t.Rx}
+	}
+	return out, nil
+}
+
+// SnapshotAndDiff 计算 hysteria2 流量增量
+func (m *Hy2Manager) SnapshotAndDiff(ctx context.Context, secret string, last *map[int64]Traffic) (map[int64]Traffic, error) {
+	cur, err := m.FetchTraffic(ctx, secret)
+	if err != nil {
+		return nil, err
+	}
+	if *last == nil {
+		*last = map[int64]Traffic{}
+	}
+	diffs := map[int64]Traffic{}
+	for uid, v := range cur {
+		prev := (*last)[uid]
+		d := Traffic{}
+		if v.Up > prev.Up {
+			d.Up = v.Up - prev.Up
+		}
+		if v.Down > prev.Down {
+			d.Down = v.Down - prev.Down
+		}
+		if d.Up > 0 || d.Down > 0 {
+			diffs[uid] = d
+		}
+		(*last)[uid] = v
+	}
+	for uid := range *last {
+		if _, ok := cur[uid]; !ok {
+			delete(*last, uid)
+		}
+	}
+	return diffs, nil
+}

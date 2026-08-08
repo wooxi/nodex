@@ -1,0 +1,430 @@
+package xray
+
+import (
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
+
+	"golang.org/x/crypto/curve25519"
+
+	"github.com/wooxi/nodex/internal/config"
+)
+
+// Manager 管理 xray 进程的生命周期与配置生成
+type Manager struct {
+	cfg   *config.Config
+	cmd   *exec.Cmd
+	users []User // 面板用户（由同步器注入）
+}
+
+func NewManager(cfg *config.Config) *Manager {
+	return &Manager{cfg: cfg}
+}
+
+// SetUsers 注入面板用户列表
+func (m *Manager) SetUsers(users []User) { m.users = users }
+
+// UpdateConfig 以新配置重建（进程不重启，由外部调用 Restart）
+func (m *Manager) UpdateConfig(cfg *config.Config) { m.cfg = cfg }
+
+// IsRunning 检查 xray 进程是否存活
+func (m *Manager) IsRunning() bool {
+	if m.cmd == nil || m.cmd.Process == nil {
+		// 检查 pid 文件，支持外部启动的 xray
+		if pid := m.readPID(); pid > 0 {
+			if err := syscall.Kill(pid, 0); err == nil {
+				return true
+			}
+		}
+		return false
+	}
+	return m.cmd.ProcessState == nil || !m.cmd.ProcessState.Exited()
+}
+
+func (m *Manager) readPID() int {
+	data, err := os.ReadFile(m.cfg.XrayPidFile())
+	if err != nil {
+		return 0
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return 0
+	}
+	return pid
+}
+
+// Pid 返回当前 xray 进程 PID（未运行时返回 0）
+func (m *Manager) Pid() int {
+	if m.cmd != nil && m.cmd.Process != nil {
+		return m.cmd.Process.Pid
+	}
+	return m.readPID()
+}
+
+func (m *Manager) writePID(pid int) {
+	os.WriteFile(m.cfg.XrayPidFile(), []byte(strconv.Itoa(pid)), 0o644)
+}
+
+// Start 生成配置并启动 xray
+func (m *Manager) Start() error {
+	if m.IsRunning() {
+		return nil
+	}
+	conf, err := m.BuildConfig()
+	if err != nil {
+		return fmt.Errorf("生成 xray 配置失败: %w", err)
+	}
+	confPath := m.cfg.XrayConfigPath()
+	if err := os.MkdirAll(filepath.Dir(confPath), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(confPath, conf, 0o644); err != nil {
+		return err
+	}
+
+	bin := m.cfg.System.XrayPath
+	if _, err := os.Stat(bin); err != nil {
+		return fmt.Errorf("xray 可执行文件不存在: %s", bin)
+	}
+
+	logDir := filepath.Dir(m.cfg.XrayLogPath())
+	os.MkdirAll(logDir, 0o755)
+	accessF, _ := os.OpenFile(m.cfg.XrayLogPath(), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	errF, _ := os.OpenFile(m.cfg.XrayErrorLogPath(), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+
+	cmd := exec.Command(bin, "run", "-c", confPath)
+	cmd.Stdout = accessF
+	cmd.Stderr = errF
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("启动 xray 失败: %w", err)
+	}
+	m.cmd = cmd
+	m.writePID(cmd.Process.Pid)
+	go cmd.Wait()
+	return nil
+}
+
+// Stop 停止 xray
+func (m *Manager) Stop() error {
+	if m.cmd != nil && m.cmd.Process != nil {
+		m.cmd.Process.Signal(syscall.SIGTERM)
+		done := make(chan struct{})
+		go func() { m.cmd.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			m.cmd.Process.Kill()
+		}
+		m.cmd = nil
+	} else if pid := m.readPID(); pid > 0 {
+		syscall.Kill(pid, syscall.SIGTERM)
+		time.Sleep(500 * time.Millisecond)
+		syscall.Kill(pid, syscall.SIGKILL)
+	}
+	os.Remove(m.cfg.XrayPidFile())
+	return nil
+}
+
+// Restart 重启 xray
+func (m *Manager) Restart() error {
+	m.Stop()
+	time.Sleep(300 * time.Millisecond)
+	return m.Start()
+}
+
+// Version 获取 xray 版本
+func (m *Manager) Version() string {
+	bin := m.cfg.System.XrayPath
+	out, err := exec.Command(bin, "version").Output()
+	if err != nil {
+		return "未知"
+	}
+	first := strings.SplitN(string(out), "\n", 2)[0]
+	return strings.TrimSpace(first)
+}
+
+// GenRealityKeys 生成 reality 密钥对（X25519）
+func GenRealityKeys() (priv, pub, shortID string, err error) {
+	privBytes := make([]byte, 32)
+	if _, err = rand.Read(privBytes); err != nil {
+		return
+	}
+	privBytes[0] &= 248
+	privBytes[31] &= 127
+	privBytes[31] |= 64
+	pubBytes, err := curve25519.X25519(privBytes, curve25519.Basepoint)
+	if err != nil {
+		return
+	}
+	// xray 使用 RawURLEncoding（无 padding 的 URL-safe base64）
+	priv = base64.RawURLEncoding.EncodeToString(privBytes)
+	pub = base64.RawURLEncoding.EncodeToString(pubBytes)
+	shortID = fmt.Sprintf("%x", privBytes[:4])
+	return
+}
+
+// ---------------- xray 配置生成 ----------------
+
+// User 面板用户
+type User struct {
+	ID          int64  `json:"id"`
+	UUID        string `json:"uuid"`
+	SpeedLimit  int64  `json:"speed_limit"`
+	DeviceLimit int    `json:"device_limit"`
+}
+
+type inbound struct {
+	Tag      string          `json:"tag"`
+	Listen   string          `json:"listen"`
+	Port     int             `json:"port"`
+	Protocol string          `json:"protocol"`
+	Settings json.RawMessage `json:"settings"`
+	Stream   json.RawMessage `json:"streamSettings,omitempty"`
+}
+
+// BuildConfig 根据当前配置 + 面板用户生成 xray 配置 JSON
+func (m *Manager) BuildConfig() ([]byte, error) {
+	cfg := m.cfg
+	users := m.users // 由 Panel 同步器注入
+
+	logLevel := cfg.System.LogLevel
+	if logLevel == "" {
+		logLevel = "info"
+	}
+
+	out := map[string]any{
+		"log": map[string]any{
+			"loglevel": logLevel,
+			"access":   cfg.XrayLogPath(),
+			"error":    cfg.XrayErrorLogPath(),
+		},
+		"api": map[string]any{
+			"tag":      "api",
+			"listen":   "127.0.0.1:10085", // 新版 commander 独立监听，无需 dokodemo-door inbound
+			"services": []string{"StatsService"},
+		},
+		"stats": map[string]any{},
+		"policy": map[string]any{
+			"levels": map[string]any{
+				"0": map[string]any{
+					"statsUserUplink":   true,
+					"statsUserDownlink": true,
+				},
+			},
+			"system": map[string]any{
+				"statsInboundUplink":   true,
+				"statsInboundDownlink": true,
+			},
+		},
+		"inbounds":  []any{},
+		"outbounds": []any{map[string]any{"protocol": "freedom", "tag": "direct"}},
+		"routing": map[string]any{
+			"rules": []any{
+				map[string]any{
+					"inboundTag": []string{"api"},
+					"outboundTag": "direct",
+					"type": "field",
+				},
+			},
+		},
+	}
+
+	inbounds := []any{}
+	if cfg.Panel.Enabled && len(users) > 0 {
+		inbounds = append(inbounds, m.buildPanelInbound(users)...)
+	} else {
+		inbounds = append(inbounds, m.buildLocalInbound()...)
+	}
+	out["inbounds"] = inbounds
+
+	// 健康检查探针（xray 自带 api 用于测试）
+	probe := map[string]any{
+		"tag":      "probe",
+		"listen":   "127.0.0.1",
+		"port":     0,
+		"protocol": "dokodemo-door",
+		"settings": map[string]any{"address": "127.0.0.1"},
+	}
+	_ = probe
+
+	return json.MarshalIndent(out, "", "  ")
+}
+
+// buildLocalInbound 本地模式：按表单配置生成单个入站
+func (m *Manager) buildLocalInbound() []any {
+	cfg := m.cfg.Node
+	var inbounds []any
+
+	switch cfg.Protocol {
+	case "hysteria2":
+		inbounds = append(inbounds, m.hy2Inbound(cfg.Hy2, []User{{ID: 1, UUID: cfg.UUID}}))
+	default:
+		inbounds = append(inbounds, m.xrayInbound(cfg, []User{{ID: 1, UUID: cfg.UUID}}))
+	}
+	return inbounds
+}
+
+// buildPanelInbound 面板模式：按面板配置生成入站（xray + hysteria2 同时启用）
+func (m *Manager) buildPanelInbound(users []User) []any {
+	cfg := m.cfg
+	var inbounds []any
+
+	// 主入站：根据面板协议决定（vless/vmess/trojan/shadowsocks）
+	node := config.NodeConfig{
+		Protocol:   cfg.Panel.NodeType,
+		Port:       cfg.Node.Port,
+		UUID:       "",
+		TLS:        cfg.Node.TLS,
+		CertPath:   cfg.Node.CertPath,
+		KeyPath:    cfg.Node.KeyPath,
+		ServerName: cfg.Node.ServerName,
+		Reality:    cfg.Node.Reality,
+		SSMethod:   cfg.Node.SSMethod,
+	}
+	switch node.Protocol {
+	case "hysteria2", "hysteria":
+		inbounds = append(inbounds, m.hy2Inbound(cfg.Node.Hy2, users))
+	default:
+		inbounds = append(inbounds, m.xrayInbound(node, users))
+	}
+
+	// 面板模式始终同时提供 hysteria2 节点
+	if cfg.Node.Hy2.Port > 0 && cfg.Panel.NodeType != "hysteria2" && cfg.Panel.NodeType != "hysteria" {
+		inbounds = append(inbounds, m.hy2Inbound(cfg.Node.Hy2, users))
+	}
+	return inbounds
+}
+
+// xrayInbound 构建 vless/vmess/trojan/shadowsocks 入站
+func (m *Manager) xrayInbound(cfg config.NodeConfig, users []User) any {
+	stream := map[string]any{"network": "tcp"}
+
+	if cfg.TLS == 2 {
+		serverNames := config.SplitCSV(cfg.Reality.ServerNames)
+		shortIDs := config.SplitCSV(cfg.Reality.ShortIDs)
+		if len(shortIDs) == 0 {
+			shortIDs = []string{""}
+		}
+		stream["security"] = "reality"
+		stream["realitySettings"] = map[string]any{
+			"show":        false,
+			"dest":        cfg.Reality.Dest,
+			"serverNames": serverNames,
+			"privateKey":  cfg.Reality.PrivateKey,
+			"shortIds":    shortIDs,
+		}
+	} else if cfg.TLS == 1 {
+		stream["security"] = "tls"
+		stream["tlsSettings"] = map[string]any{
+			"certificates": []any{map[string]any{
+				"certificateFile": cfg.CertPath,
+				"keyFile":         cfg.KeyPath,
+			}},
+		}
+	}
+
+	var settings map[string]any
+	switch cfg.Protocol {
+	case "vmess":
+		clients := []any{}
+		for _, u := range users {
+			clients = append(clients, map[string]any{
+				"id": u.UUID, "email": emailOf(u.ID),
+			})
+		}
+		settings = map[string]any{"clients": clients}
+	case "trojan":
+		clients := []any{}
+		for _, u := range users {
+			clients = append(clients, map[string]any{
+				"password": u.UUID, "email": emailOf(u.ID),
+			})
+		}
+		settings = map[string]any{"clients": clients}
+	case "shadowsocks":
+		usersArr := []any{}
+		for _, u := range users {
+			usersArr = append(usersArr, map[string]any{
+				"email": emailOf(u.ID), "password": u.UUID, "method": cfg.SSMethod,
+			})
+		}
+		settings = map[string]any{"users": usersArr}
+	default: // vless
+		clients := []any{}
+		flow := ""
+		if cfg.TLS == 2 {
+			flow = "xtls-rprx-vision"
+		}
+		for _, u := range users {
+			clients = append(clients, map[string]any{
+				"id": u.UUID, "email": emailOf(u.ID), "flow": flow,
+			})
+		}
+		settings = map[string]any{"clients": clients, "decryption": "none"}
+	}
+
+	return map[string]any{
+		"tag":            "in-main",
+		"listen":         "0.0.0.0",
+		"port":           cfg.Port,
+		"protocol":       cfg.Protocol,
+		"settings":       settings,
+		"streamSettings": stream,
+	}
+}
+
+// hy2Inbound 构建 hysteria2 入站（xray 1.8+ 原生支持）
+func (m *Manager) hy2Inbound(cfg config.Hy2, users []User) any {
+	clients := []any{}
+	for _, u := range users {
+		clients = append(clients, map[string]any{
+			"password": u.UUID, "email": emailOf(u.ID),
+		})
+	}
+	settings := map[string]any{"clients": clients}
+	if cfg.Obfs != "none" && cfg.Obfs != "" {
+		settings["obfs"] = map[string]any{
+			"type":     cfg.Obfs,
+			"password": cfg.ObfsPassword,
+		}
+	}
+	if !cfg.IgnoreBW {
+		settings["upMbps"] = cfg.UpMbps
+		settings["downMbps"] = cfg.DownMbps
+	}
+	return map[string]any{
+		"tag":      "in-hy2",
+		"listen":   "0.0.0.0",
+		"port":     cfg.Port,
+		"protocol": "hysteria2",
+		"settings": settings,
+	}
+}
+
+// emailOf 用户 email 格式：uid@nodex，用于流量统计映射
+func emailOf(uid int64) string { return strconv.FormatInt(uid, 10) + "@nodex" }
+
+// ParseEmail 从 xray stat name（user>>>{email}>>>traffic>>>uplink）或 email 解析 uid
+func ParseEmail(name string) (int64, bool) {
+	// stat name 形如 user>>>1@nodex>>>traffic>>>uplink，取第二段
+	if parts := strings.Split(name, ">>>"); len(parts) >= 2 {
+		name = parts[1]
+	}
+	idx := strings.Index(name, "@")
+	if idx <= 0 {
+		return 0, false
+	}
+	uid, err := strconv.ParseInt(name[:idx], 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return uid, true
+}
