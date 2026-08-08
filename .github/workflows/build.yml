@@ -36,8 +36,14 @@ jobs:
 
       - name: Install OpenWrt SDK
         run: |
-          wget -q https://downloads.openwrt.org/releases/23.05.5/targets/x86/64/openwrt-sdk-23.05.5-x86-64_gcc-12.3.0_musl.Linux-x86_64.tar.xz
-          tar xf openwrt-sdk-*.tar.xz
+          SDK_URL=https://downloads.openwrt.org/releases/23.05.5/targets/x86/64/openwrt-sdk-23.05.5-x86-64_gcc-12.3.0_musl.Linux-x86_64.tar.xz
+          for i in 1 2 3; do
+            wget -q --timeout=120 --tries=3 -O openwrt-sdk.tar.xz "$SDK_URL" && break
+            echo "download failed (attempt $i), retrying..."
+            sleep 10
+          done
+          ls -la openwrt-sdk.tar.xz
+          tar xf openwrt-sdk.tar.xz
           mv openwrt-sdk-* sdk
 
       - name: Build ipk
