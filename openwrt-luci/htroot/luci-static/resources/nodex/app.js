@@ -120,11 +120,17 @@
                     ? '<span class="nodex-tag nodex-tag-ok">正常</span>'
                     : '<span class="nodex-tag nodex-tag-err" title="' + esc(panelErrs.map(function (n) { return n.name + ': ' + n.panel.lastError; }).join('\n')) + '">错误</span>');
 
+            function coreVer(n) {
+                var v = '';
+                if (n.protocol === 'hysteria2') { v = n.hy2 && n.hy2.version ? n.hy2.version : ''; }
+                else { v = n.xray && n.xray.version ? n.xray.version : ''; }
+                return '<span style="color:#999;font-size:12px">' + esc(v.split(' ')[0]) + '</span>';
+            }
             var rows = nodes.map(function (n) {
                 return '<tr>' +
                     '<td><b>' + esc(n.name) + '</b> <span style="color:#999">' + esc(n.id) + '</span></td>' +
-                    '<td>' + protoTag(n.protocol) + '</td>' +
-                    '<td>' + nodeState(n) + '</td>' +
+                    '<td>' + protoTag(n.protocol) + ' ' + coreVer(n) + '</td>' +
+                    '<td>' + (n.enabled ? nodeState(n) : tag(false, '已禁用')) + '</td>' +
                     '<td><button class="nodex-btn" onclick="window.nodexRestart(\'' + n.id + '\')">重启</button>' +
                     '<a class="nodex-btn" href="#nodeedit/' + n.id + '">配置</a></td>' +
                     '</tr>';
@@ -134,7 +140,7 @@
                 '<div class="nodex-card"><h3>总览</h3>' +
                 '<table class="nodex-table"><tr><th>节点数</th><th>运行中</th><th>在线用户</th><th>总流量</th></tr>' +
                 '<tr><td>' + nodes.length + '</td><td>' + (st.running || 0) + '</td><td>' + online + '</td><td>' + fmtBytes(total) + '</td></tr></table></div>' +
-                '<div class="nodex-card"><h3>面板同步（公共）</h3>' +
+                '<div class="nodex-card"><h3>面板同步</h3>' +
                 '<table class="nodex-table"><tr><th>状态</th><th>上次同步</th></tr>' +
                 '<tr><td>' + panelHtml + '</td><td>' + esc(lastSync || '-') + '</td></tr></table></div>' +
                 '<div class="nodex-card"><h3>节点状态</h3>' +
@@ -144,7 +150,7 @@
                 '<table class="nodex-table"><tr><th>节点</th><th>用户</th><th>流量</th><th>在线 IP</th></tr>' +
                 (users.map(function (u) {
                     return '<tr><td>' + esc(u.node_name || '-') + '</td><td>' + esc(u.uid) + '</td><td>' + fmtBytes(u.traffic) + '</td><td>' + esc((u.ips || []).join(', ') || '-') + '</td></tr>';
-                }).join('') || '<tr><td colspan="4">暂无数据</td></tr>') + '</table></div>';
+                }).join('') || '<tr><td colspan="4" style="color:#999">暂无流量数据（用户连接节点后自动统计）</td></tr>') + '</table></div>';
         }).catch(function (e) { el.innerHTML = '<div class="nodex-err">加载失败: ' + esc(e.message) + '</div>'; });
     }
 
@@ -307,12 +313,22 @@
     }
 
     window.nodexSetProto = function (id, proto) {
-        // 本地切换协议（不闪屏）：直接改当前节点对象并重渲染表单
+        // 本地切换协议（不闪屏）：保留当前表单值后重渲染
         if (window.nodexEditNode && window.nodexEditNode.id === id) {
+            syncEditNodeFromForm();
             window.nodexEditNode.node.protocol = proto;
             renderNodeEditForm(window.nodexEditNode);
         }
     };
+
+    function syncEditNodeFromForm() {
+        var nameEl = document.getElementById('nx-name');
+        var enEl = document.getElementById('nx-enabled');
+        if (window.nodexEditNode && nameEl) {
+            window.nodexEditNode.name = nameEl.value;
+            window.nodexEditNode.enabled = enEl.checked;
+        }
+    }
 
     window.nodexGen = function (id, gen, key) {
         var req = { type: gen === 'reality' ? 'reality' : (gen === 'uuid' ? 'uuid' : (gen === 'hex8' ? 'hex' : 'password')) };
@@ -337,12 +353,16 @@
 
     window.nodexSaveNode = function (id, restart) {
         var cfg = null;
+        syncEditNodeFromForm();
         api('/config').then(function (c) {
             cfg = c;
-            var node = cfg.nodes.filter(function (n) { return n.id === id; })[0];
-            if (!node) throw new Error('节点不存在');
-            node.name = document.getElementById('nx-name').value;
-            node.enabled = document.getElementById('nx-enabled').checked;
+            var idx = cfg.nodes.findIndex(function (n) { return n.id === id; });
+            if (idx < 0) throw new Error('节点不存在');
+            // 用本地编辑对象（含协议切换等未保存修改）
+            var node = window.nodexEditNode && window.nodexEditNode.id === id
+                ? JSON.parse(JSON.stringify(window.nodexEditNode))
+                : cfg.nodes[idx];
+            cfg.nodes[idx] = node;
             document.querySelectorAll('#nodex-content [data-key]').forEach(function (el) {
                 var key = el.dataset.key;
                 var v;
