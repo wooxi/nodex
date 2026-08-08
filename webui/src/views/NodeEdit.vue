@@ -15,6 +15,31 @@
       </el-form>
     </div>
 
+    <!-- 面板对接（节点级：node_id/类型每节点独立） -->
+    <div class="card">
+      <div class="card-title"><el-icon><Link /></el-icon>面板对接（本节点）</div>
+      <el-form label-width="130px" style="max-width:640px">
+        <el-form-item label="面板节点 ID" required>
+          <el-input-number v-model="form.node_id" :min="1" :max="9999" />
+          <span class="tip">面板后台「服务器」中的节点 ID（每节点不同）</span>
+        </el-form-item>
+        <el-form-item label="节点类型">
+          <el-select v-model="form.node_type" placeholder="自动（推荐）" clearable style="width:220px">
+            <el-option label="vless" value="vless" />
+            <el-option label="vmess" value="vmess" />
+            <el-option label="trojan" value="trojan" />
+            <el-option label="shadowsocks" value="shadowsocks" />
+            <el-option label="hysteria2" value="hysteria" />
+          </el-select>
+          <span class="tip">留空由面板返回的协议决定</span>
+        </el-form-item>
+        <el-form-item>
+          <el-button :loading="testing" @click="testPanel">测试面板连接</el-button>
+          <span class="tip">面板地址/密钥为全局配置（面板对接页）</span>
+        </el-form-item>
+      </el-form>
+    </div>
+
     <!-- 协议选择 + 对应配置 -->
     <div class="card">
       <div class="card-title"><el-icon><Key /></el-icon>协议配置</div>
@@ -142,7 +167,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Setting, Key, Refresh, Lightning, Lock, Connection, Share } from '@element-plus/icons-vue'
+import { Setting, Key, Refresh, Lightning, Lock, Connection, Share, Link } from '@element-plus/icons-vue'
 import { api } from '../api'
 
 const route = useRoute()
@@ -161,6 +186,21 @@ const protoLabel = computed(() => {
 
 const form = ref(null)
 const saving = ref(false)
+const testing = ref(false)
+
+async function testPanel() {
+  testing.value = true
+  try {
+    const cfg = await api.get('/api/config')
+    const res = await api.post('/api/nodes/test', {
+      url: cfg.panel.url || '',
+      token: cfg.panel.token || '',
+      node_id: form.value.node_id || 0,
+      node_type: form.value.node_type || ''
+    })
+    ElMessage.success(res.message)
+  } catch (e) { ElMessage.error(e.message) } finally { testing.value = false }
+}
 
 onMounted(async () => {
   try {

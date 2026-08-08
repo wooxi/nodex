@@ -34,12 +34,15 @@ type SystemConfig struct {
 	Hy2APIPortBase int   `json:"hy2_api_port_base"` // hysteria traffic API 起始端口
 }
 
-// Node 单个节点配置（协议相关；面板对接为全局配置）
+// Node 单个节点配置
+// 面板对接：URL/密钥为全局（Config.Panel），node_id/node_type 每节点独立
 type Node struct {
-	ID      string     `json:"id"`      // 唯一标识（如 n1）
-	Name    string     `json:"name"`    // 显示名称
-	Enabled bool       `json:"enabled"` // 是否启用
-	Node    NodeConfig `json:"node"`    // 协议配置
+	ID       string     `json:"id"`       // 唯一标识（如 n1）
+	Name     string     `json:"name"`     // 显示名称
+	Enabled  bool       `json:"enabled"`  // 是否启用
+	NodeID   int        `json:"node_id"`  // 面板节点 ID（每节点不同）
+	NodeType string     `json:"node_type"` // 面板节点类型，留空自动
+	Node     NodeConfig `json:"node"`     // 协议配置
 }
 
 type PanelConfig struct {
@@ -158,7 +161,7 @@ func Load(path string) (*Config, error) {
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return nil, err
 	}
-	// 兼容 v0.2 多节点版：node.Panel 提升为全局
+	// 兼容 v0.2.x：node.Panel（每节点面板）与全局 panel.node_id 迁移到节点级 NodeID/NodeType
 	type legacyNode struct {
 		ID      string      `json:"id"`
 		Name    string      `json:"name"`
@@ -175,6 +178,25 @@ func Load(path string) (*Config, error) {
 			cfg.Panel = legacyNodes.Panel
 		} else if cfg.Panel.URL == "" && legacyNodes.Nodes[0].Panel.URL != "" {
 			cfg.Panel = legacyNodes.Nodes[0].Panel
+		}
+		// 节点级 node_id/node_type：优先节点自带，其次全局
+		for i, ln := range legacyNodes.Nodes {
+			n := cfg.Nodes[i]
+			if n.NodeID == 0 && ln.Panel.NodeID > 0 {
+				n.NodeID = ln.Panel.NodeID
+			}
+			if n.NodeType == "" && ln.Panel.NodeType != "" {
+				n.NodeType = ln.Panel.NodeType
+			}
+		}
+		if cfg.Panel.NodeID > 0 {
+			for _, n := range cfg.Nodes {
+				if n.NodeID == 0 {
+					n.NodeID = cfg.Panel.NodeID
+				}
+			}
+			cfg.Panel.NodeID = 0
+			cfg.Panel.NodeType = ""
 		}
 	}
 	// 兼容旧版单节点配置：迁移到 nodes[0] + 全局 panel
@@ -244,9 +266,6 @@ func (c *Config) Validate() error {
 		if c.Panel.Token == "" {
 			return errors.New("通信密钥不能为空")
 		}
-		if c.Panel.NodeID <= 0 {
-			return errors.New("节点 ID 必须大于 0")
-		}
 	}
 	if len(c.Nodes) == 0 {
 		return errors.New("至少需要配置一个节点")
@@ -260,6 +279,9 @@ func (c *Config) Validate() error {
 			return errors.New("节点 ID 重复: " + n.ID)
 		}
 		seen[n.ID] = true
+		if c.Panel.Enabled && n.NodeID <= 0 {
+			return errors.New("节点 [" + n.Name + "] 面板节点 ID 必须大于 0")
+		}
 		switch n.Node.Protocol {
 		case "vless", "vmess", "trojan", "shadowsocks", "hysteria2":
 		default:

@@ -14,7 +14,6 @@
                 {{ row.enabled ? (row.xray.running ? '运行中' : '已停止') : '已禁用' }}
               </el-tag>
               <b>{{ row.name }}</b>
-              <span class="node-id">{{ row.id }}</span>
             </div>
           </template>
         </el-table-column>
@@ -56,12 +55,14 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Collection, Plus, Edit, Delete, CircleCheck } from '@element-plus/icons-vue'
 import { api } from '../api'
 
 const PROTO_LABELS = { vless: 'VLESS', vmess: 'VMess', trojan: 'Trojan', shadowsocks: 'SS', hysteria2: 'Hysteria2' }
 const protoLabel = (p) => PROTO_LABELS[p] || p || '未知'
+const router = useRouter()
 const nodes = ref([])
 const loading = ref(false)
 
@@ -88,6 +89,8 @@ async function addNode() {
       id: 'n' + Math.random().toString(16).slice(2, 6),
       name: '新节点' + (cfg.nodes.length + 1),
       enabled: true,
+      node_id: 1,
+      node_type: '',
       node: {
         protocol: 'vless', port: 8686, uuid: '', tls: 0, cert_path: '', key_path: '', server_name: '',
         reality: { dest: 'www.amazon.com:443', server_names: 'www.amazon.com', private_key: '', public_key: '', short_ids: '' },
@@ -97,8 +100,8 @@ async function addNode() {
     }
     cfg.nodes.push(node)
     await api.put('/api/config', cfg)
-    ElMessage.success('节点已创建')
-    refresh()
+    ElMessage.success('节点已创建，正在打开编辑页...')
+    setTimeout(() => router.push('/nodes/' + node.id), 500)
   } catch (e) { ElMessage.error(e.message) }
 }
 

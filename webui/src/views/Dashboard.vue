@@ -34,7 +34,6 @@
             {{ n.enabled ? (n.xray.running ? '运行中' : '已停止') : '已禁用' }}
           </el-tag>
           <b>{{ n.name }}</b>
-          <span class="node-meta">{{ n.id }}</span>
         </div>
         <div class="node-vers">
           <span class="v-item">xray: <b>{{ n.xray.running ? '●' : '○' }}</b> {{ shortVer(n.xray.version) }}</span>

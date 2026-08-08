@@ -334,7 +334,7 @@ func (m *Manager) buildPanelInbound(users []User) []any {
 	}
 
 	node := config.NodeConfig{
-		Protocol:   m.global.Panel.NodeType,
+		Protocol:   m.cfg.NodeType,
 		Port:       port,
 		UUID:       "",
 		TLS:        tlsMode,

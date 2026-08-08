@@ -50,7 +50,7 @@ func NewSyncer(node *config.Node, global *config.Config, nodeDir string, xm *xra
 		node:      node,
 		global:    global,
 		nodeDir:   nodeDir,
-		panel:     NewClient(&global.Panel),
+		panel:     NewClientForNode(&global.Panel, node),
 		xm:        xm,
 		hy2:       hy2,
 		stats:     stats,
@@ -64,7 +64,7 @@ func (s *Syncer) UpdateConfig(node *config.Node, global *config.Config) {
 	defer s.mu.Unlock()
 	s.node = node
 	s.global = global
-	s.panel = NewClient(&global.Panel)
+	s.panel = NewClientForNode(&global.Panel, node)
 	s.accessLog.UpdateConfig(nodeDirOf(node, global))
 	s.xm.UpdateConfig(node, global)
 	s.hy2.UpdateConfig(node, global)
@@ -188,8 +188,8 @@ func (s *Syncer) syncOnce() {
 	}
 
 	// 3. 若面板指定了协议且本地未显式覆盖，采用面板协议
-	if remote.Protocol != "" && global.Panel.NodeType == "" {
-		global.Panel.NodeType = remote.Protocol
+	if remote.Protocol != "" && node.NodeType == "" {
+		node.NodeType = remote.Protocol
 		s.xm.UpdateConfig(node, global)
 	}
 

@@ -10,14 +10,14 @@
         <el-form-item label="xray 路径">
           <el-input v-model="form.system.xray_path" style="width:320px" />
           <span v-if="cores.xray" class="core-info">
-            <el-tag :type="cores.xray.installed ? 'success' : 'danger'" size="small">{{ cores.xray.installed ? cores.xray.version.split(' ')[0] : '未安装' }}</el-tag>
+            <el-tag :type="cores.xray.installed ? 'success' : 'danger'" size="small">{{ cores.xray.installed ? cores.xray.version : '未安装' }}</el-tag>
             <el-button size="small" :loading="updating === 'xray'" @click="updateCore('xray')">{{ cores.xray.installed ? '更新' : '下载' }}</el-button>
           </span>
         </el-form-item>
         <el-form-item label="hysteria 路径">
           <el-input v-model="form.system.hysteria_path" style="width:320px" />
           <span v-if="cores.hysteria" class="core-info">
-            <el-tag :type="cores.hysteria.installed ? 'success' : 'danger'" size="small">{{ cores.hysteria.installed ? (cores.hysteria.version.split(' ')[1] || cores.hysteria.version.split(' ')[0]) : '未安装' }}</el-tag>
+            <el-tag :type="cores.hysteria.installed ? 'success' : 'danger'" size="small">{{ cores.hysteria.installed ? cores.hysteria.version : '未安装' }}</el-tag>
             <el-button size="small" :loading="updating === 'hysteria'" @click="updateCore('hysteria')">{{ cores.hysteria.installed ? '更新' : '下载' }}</el-button>
           </span>
         </el-form-item>

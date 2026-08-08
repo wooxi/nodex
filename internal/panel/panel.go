@@ -59,6 +59,14 @@ func NewClient(cfg *config.PanelConfig) *Client {
 	}
 }
 
+// NewClientForNode 节点级面板客户端（URL/密钥取全局，node_id/node_type 取节点）
+func NewClientForNode(global *config.PanelConfig, node *config.Node) *Client {
+	cfg := *global
+	cfg.NodeID = node.NodeID
+	cfg.NodeType = node.NodeType
+	return NewClient(&cfg)
+}
+
 func (c *Client) base() string {
 	return strings.TrimRight(c.cfg.URL, "/") + "/api/v1/server/UniProxy"
 }

@@ -128,7 +128,7 @@
             }
             var rows = nodes.map(function (n) {
                 return '<tr>' +
-                    '<td><b>' + esc(n.name) + '</b> <span style="color:#999">' + esc(n.id) + '</span></td>' +
+                    '<td><b>' + esc(n.name) + '</b></td>' +
                     '<td>' + protoTag(n.protocol) + ' ' + coreVer(n) + '</td>' +
                     '<td>' + (n.enabled ? nodeState(n) : tag(false, '已禁用')) + '</td>' +
                     '<td><button class="nodex-btn" onclick="window.nodexRestart(\'' + n.id + '\')">重启</button>' +
@@ -177,7 +177,7 @@
             }
             var rows = nodes.map(function (n) {
                 return '<tr>' +
-                    '<td><b>' + esc(n.name) + '</b> <span style="color:#999">' + esc(n.id) + '</span></td>' +
+                    '<td><b>' + esc(n.name) + '</b></td>' +
                     '<td>' + protoTag(n.protocol) + '</td>' +
                     '<td>' + (n.enabled ? nodeState(n) : tag(false, '已禁用')) + '</td>' +
                     '<td><a class="nodex-btn" href="#nodeedit/' + n.id + '">编辑</a>' +
@@ -193,22 +193,28 @@
     }
 
     window.nodexAddNode = function () {
+        // 创建默认节点并跳转到编辑页
         api('/config').then(function (cfg) {
             cfg.nodes = cfg.nodes || [];
-            cfg.nodes.push({
+            var node = {
                 id: 'n' + Math.random().toString(16).slice(2, 6),
                 name: '新节点' + (cfg.nodes.length + 1),
                 enabled: true,
+                node_id: 1,
+                node_type: '',
                 node: {
                     protocol: 'vless', port: 8686, uuid: '', tls: 0, cert_path: '', key_path: '', server_name: '',
                     reality: { dest: 'www.amazon.com:443', server_names: 'www.amazon.com', private_key: '', public_key: '', short_ids: '' },
                     hy2: { port: 9443, password: '', obfs: 'none', obfs_password: '', up_mbps: 100, down_mbps: 1000, ignore_bw: false, cert_path: '', key_path: '' },
                     ss_method: '2022-blake3-aes-128-gcm'
                 }
+            };
+            cfg.nodes.push(node);
+            return api('/config', { method: 'PUT', body: cfg }).then(function () {
+                // 跳转到新节点编辑页
+                location.hash = '#nodeedit/' + node.id;
             });
-            return api('/config', { method: 'PUT', body: cfg });
-        }).then(function () { notify('节点已创建', true); renderNodes(); })
-            .catch(function (e) { notify(e.message || '创建失败', false); });
+        }).catch(function (e) { notify(e.message || '创建失败', false); });
     };
 
     window.nodexDelNode = function (id, name) {
@@ -301,10 +307,22 @@
                 fields += f('私钥路径', 'node.hy2.key_path', 'text', node.node.hy2.key_path);
             }
 
+            var nodeIdInput = '<input type="number" id="nx-nodeid" value="' + esc(node.node_id || 0) + '" style="width:100px">';
+            var nodeTypeSel = '<select id="nx-nodetype">' +
+                '<option value="">自动（推荐）</option>' +
+                [['vless', 'vless'], ['vmess', 'vmess'], ['trojan', 'trojan'], ['shadowsocks', 'shadowsocks'], ['hysteria', 'hysteria2']].map(function (t) {
+                    return '<option value="' + t[0] + '"' + (node.node_type === t[0] ? ' selected' : '') + '>' + t[1] + '</option>';
+                }).join('') + '</select>';
+
             el.innerHTML =
                 '<div class="nodex-card"><h3>节点编辑：' + esc(node.name) + ' <a class="nodex-btn" href="#nodes">返回</a></h3>' +
                 '<div class="nodex-field"><label>节点名称</label><input type="text" id="nx-name" value="' + esc(node.name) + '"></div>' +
                 '<div class="nodex-field"><label>启用节点</label><input type="checkbox" id="nx-enabled"' + (node.enabled ? ' checked' : '') + '></div></div>' +
+                '<div class="nodex-card"><h3>面板对接（本节点）</h3>' +
+                '<div class="nodex-field"><label>面板节点 ID</label>' + nodeIdInput + '</div>' +
+                '<div class="nodex-field"><label>节点类型</label>' + nodeTypeSel + '</div>' +
+                '<div class="nodex-field"><label></label><button class="nodex-btn" onclick="window.nodexTestNodePanel(\'' + id + '\')">测试面板连接</button></div>' +
+                '<div style="color:#999;font-size:12px;margin-top:4px">提示：面板模式下监听端口以面板节点配置为准</div></div>' +
                 '<div class="nodex-card"><h3>协议</h3><div>' + protoBtns + '</div></div>' +
                 '<div class="nodex-card"><h3>协议配置</h3>' + fields +
                 '<div style="margin-top:12px">' +
@@ -324,11 +342,31 @@
     function syncEditNodeFromForm() {
         var nameEl = document.getElementById('nx-name');
         var enEl = document.getElementById('nx-enabled');
+        var nidEl = document.getElementById('nx-nodeid');
+        var ntypeEl = document.getElementById('nx-nodetype');
         if (window.nodexEditNode && nameEl) {
             window.nodexEditNode.name = nameEl.value;
             window.nodexEditNode.enabled = enEl.checked;
+            if (nidEl) window.nodexEditNode.node_id = parseInt(nidEl.value, 10) || 0;
+            if (ntypeEl) window.nodexEditNode.node_type = ntypeEl.value;
         }
     }
+
+    window.nodexTestNodePanel = function (id) {
+        syncEditNodeFromForm();
+        api('/config').then(function (cfg) {
+            var n = (cfg.nodes || []).filter(function (x) { return x.id === id; })[0];
+            if (!n) throw new Error('节点不存在');
+            return api('/nodes/test', { body: {
+                url: cfg.panel.url || '',
+                token: cfg.panel.token || '',
+                node_id: n.node_id || 0,
+                node_type: n.node_type || ''
+            } });
+        }).then(function (res) {
+            notify(res.message || '连接成功', true);
+        }).catch(function (e) { notify(e.message || '连接失败', false); });
+    };
 
     window.nodexGen = function (id, gen, key) {
         var req = { type: gen === 'reality' ? 'reality' : (gen === 'uuid' ? 'uuid' : (gen === 'hex8' ? 'hex' : 'password')) };
@@ -396,12 +434,6 @@
                 '<div class="nodex-field"><label>启用面板对接</label><input type="checkbox" id="nx-p-enabled"' + (p.enabled ? ' checked' : '') + '></div>' +
                 '<div class="nodex-field"><label>面板地址</label><input type="text" id="nx-p-url" value="' + esc(p.url || '') + '"></div>' +
                 '<div class="nodex-field"><label>通信密钥</label><input type="text" id="nx-p-token" value="' + esc(p.token || '') + '"></div>' +
-                '<div class="nodex-field"><label>节点 ID</label><input type="number" id="nx-p-nodeid" value="' + esc(p.node_id || 0) + '"></div>' +
-                '<div class="nodex-field"><label>节点类型</label><select id="nx-p-type">' +
-                '<option value="">自动（推荐）</option>' +
-                ['vless', 'vmess', 'trojan', 'shadowsocks', 'hysteria'].map(function (t) {
-                    return '<option value="' + t + '"' + (p.node_type === t ? ' selected' : '') + '>' + t + '</option>';
-                }).join('') + '</select></div>' +
                 '<div class="nodex-field"><label>拉取/上报间隔</label>' +
                 '<input type="number" id="nx-p-pull" value="' + esc(p.pull_interval || 60) + '" style="width:80px"> / ' +
                 '<input type="number" id="nx-p-push" value="' + esc(p.push_interval || 60) + '" style="width:80px"> 秒</div>' +
@@ -417,8 +449,6 @@
                 enabled: document.getElementById('nx-p-enabled').checked,
                 url: document.getElementById('nx-p-url').value,
                 token: document.getElementById('nx-p-token').value,
-                node_id: parseInt(document.getElementById('nx-p-nodeid').value, 10) || 0,
-                node_type: document.getElementById('nx-p-type').value,
                 pull_interval: parseInt(document.getElementById('nx-p-pull').value, 10) || 60,
                 push_interval: parseInt(document.getElementById('nx-p-push').value, 10) || 60
             };
@@ -430,9 +460,7 @@
     window.nodexTestPanel = function () {
         api('/nodes/test', { body: {
             url: document.getElementById('nx-p-url').value,
-            token: document.getElementById('nx-p-token').value,
-            node_id: parseInt(document.getElementById('nx-p-nodeid').value, 10) || 0,
-            node_type: document.getElementById('nx-p-type').value
+            token: document.getElementById('nx-p-token').value
         } }).then(function (res) {
             notify(res.message || '连接成功', true);
         }).catch(function (e) { notify(e.message || '连接失败', false); });
@@ -468,7 +496,7 @@
             api('/core/info?type=' + kind).then(function (info) {
                 var name = kind === 'xray' ? 'xray' : 'hysteria';
                 if (info.installed) {
-                    el.innerHTML = ' <span class="nodex-tag nodex-tag-ok">' + esc((info.version || '').split(' ')[0]) + '</span>' +
+                    el.innerHTML = ' <span class="nodex-tag nodex-tag-ok">' + esc(info.version || '已安装') + '</span>' +
                         ' <button class="nodex-btn" onclick="window.nodexUpdateCore(\'' + kind + '\')">更新</button>';
                 } else {
                     el.innerHTML = ' <span class="nodex-tag nodex-tag-err">未安装</span>' +

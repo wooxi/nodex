@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -18,6 +19,8 @@ import (
 	"github.com/wooxi/nodex/internal/panel"
 	"github.com/wooxi/nodex/internal/xray"
 )
+
+var versionRe = regexp.MustCompile(`(v?\d+\.\d+\.\d+)`)
 
 // Runtime 单个节点的运行时（xray + hysteria2 + 同步器 + stats）
 type Runtime struct {
@@ -214,20 +217,14 @@ func (m *Manager) CoreInfo(kind string) map[string]any {
 	}
 	ver := ""
 	if installed {
-		if kind == "xray" {
-			out, err := exec.Command(path, "version").Output()
-			if err == nil {
-				ver = strings.SplitN(string(out), "\n", 2)[0]
-			}
-		} else {
-			out, err := exec.Command(path, "version").Output()
-			if err == nil {
-				for _, line := range strings.Split(string(out), "\n") {
-					if strings.Contains(line, "Version") {
-						ver = strings.TrimSpace(line)
-						break
-					}
-				}
+		out, err := exec.Command(path, "version").Output()
+		if err == nil {
+			// 提取版本号：匹配 v?数字.数字.数字
+			m := versionRe.FindStringSubmatch(string(out))
+			if len(m) > 1 {
+				ver = m[1]
+			} else if kind == "xray" {
+				ver = strings.Fields(strings.SplitN(string(out), "\n", 2)[0])[1]
 			}
 		}
 	}

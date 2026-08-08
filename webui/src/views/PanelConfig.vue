@@ -15,20 +15,8 @@
           <el-form-item label="通信密钥" required>
             <el-input v-model="form.token" placeholder="面板后台生成的通信密钥" show-password />
           </el-form-item>
-          <el-form-item label="节点 ID" required>
-            <el-input-number v-model="form.node_id" :min="1" :max="9999" />
-            <span class="tip">面板后台「服务器」中的节点 ID</span>
-          </el-form-item>
-          <el-form-item label="节点类型">
-            <el-select v-model="form.node_type" placeholder="自动（推荐）" clearable style="width:220px">
-              <el-option label="vless" value="vless" />
-              <el-option label="vmess" value="vmess" />
-              <el-option label="trojan" value="trojan" />
-              <el-option label="shadowsocks" value="shadowsocks" />
-              <el-option label="hysteria2" value="hysteria" />
-            </el-select>
-            <span class="tip">留空由面板返回的协议决定</span>
-          </el-form-item>
+          <el-alert type="info" :closable="false" style="margin-bottom:16px"
+            title="节点 ID 与节点类型在「节点管理 → 编辑节点」中单独配置（每节点不同）" />
           <el-form-item label="拉取/上报间隔">
             <el-input-number v-model="form.pull_interval" :min="10" :max="600" /> 秒 /
             <el-input-number v-model="form.push_interval" :min="10" :max="600" /> 秒
@@ -55,7 +43,7 @@ import { ElMessage } from 'element-plus'
 import { Link } from '@element-plus/icons-vue'
 import { api } from '../api'
 
-const form = reactive({ enabled: false, url: '', token: '', node_id: 1, node_type: '', pull_interval: 60, push_interval: 60 })
+const form = reactive({ enabled: false, url: '', token: '', pull_interval: 60, push_interval: 60 })
 const saving = ref(false)
 const testing = ref(false)
 
