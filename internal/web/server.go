@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"strconv"
 	"os"
 	"strings"
 	"sync"
@@ -460,8 +461,15 @@ func (s *Server) saveConfig() {
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
+	// 显式 Content-Length：避免 chunked 编码（LuCI nixio 代理不解 chunked）
+	data, err := json.Marshal(v)
+	if err != nil {
+		data = []byte(`{"error":"marshal failed"}`)
+		code = http.StatusInternalServerError
+	}
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(v)
+	w.Write(data)
 }
 
 func isLocal(addr string) bool {

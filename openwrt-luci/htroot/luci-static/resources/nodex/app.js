@@ -13,10 +13,12 @@
             init.body = JSON.stringify(opts.body);
         }
         return fetch(API + path, init).then(function (r) {
-            return r.json().catch(function () {
-                // 非 JSON：通常是 LuCI 会话过期返回登录页，自动刷新去重新登录
-                setTimeout(function () { location.reload(); }, 500);
-                throw new Error('LuCI 会话已过期，正在跳转登录...');
+            return r.text().then(function (t) {
+                try {
+                    return JSON.parse(t);
+                } catch (e) {
+                    throw new Error('API ' + r.status + ': ' + (t || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 150));
+                }
             });
         });
     }
