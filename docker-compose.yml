@@ -1,0 +1,17 @@
+services:
+  nodex:
+    build: .
+    image: nodex:latest
+    container_name: nodex
+    restart: unless-stopped
+    # host 网络：节点服务需绑定任意端口（8686/9443 等），无需逐个映射
+    network_mode: host
+    volumes:
+      - ./data:/etc/nodex
+    environment:
+      - TZ=Asia/Shanghai
+    # 如需限制端口可改用 bridge + ports 映射：
+    # ports:
+    #   - "8888:8888"
+    #   - "8686:8686"
+    #   - "9443:9443/udp"

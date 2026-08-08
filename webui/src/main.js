@@ -6,8 +6,8 @@ import 'element-plus/dist/index.css'
 import App from './App.vue'
 import Login from './views/Login.vue'
 import Dashboard from './views/Dashboard.vue'
-import PanelConfig from './views/PanelConfig.vue'
-import NodeConfig from './views/NodeConfig.vue'
+import Nodes from './views/Nodes.vue'
+import NodeEdit from './views/NodeEdit.vue'
 import SystemConfig from './views/SystemConfig.vue'
 import Logs from './views/Logs.vue'
 
@@ -16,8 +16,8 @@ const router = createRouter({
   routes: [
     { path: '/login', component: Login },
     { path: '/', component: Dashboard },
-    { path: '/panel', component: PanelConfig },
-    { path: '/node', component: NodeConfig },
+    { path: '/nodes', component: Nodes },
+    { path: '/nodes/:id', component: NodeEdit },
     { path: '/system', component: SystemConfig },
     { path: '/logs', component: Logs }
   ]

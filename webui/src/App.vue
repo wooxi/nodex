@@ -7,8 +7,7 @@
       </div>
       <el-menu :default-active="route.path" router background-color="#1d2129" text-color="#a3a6ad" active-text-color="#409eff">
         <el-menu-item index="/"><el-icon><Odometer /></el-icon>仪表盘</el-menu-item>
-        <el-menu-item index="/panel"><el-icon><Link /></el-icon>面板对接</el-menu-item>
-        <el-menu-item index="/node"><el-icon><Setting /></el-icon>节点配置</el-menu-item>
+        <el-menu-item index="/nodes"><el-icon><Collection /></el-icon>节点管理</el-menu-item>
         <el-menu-item index="/logs"><el-icon><Document /></el-icon>运行日志</el-menu-item>
         <el-menu-item index="/system"><el-icon><Tools /></el-icon>系统设置</el-menu-item>
       </el-menu>
@@ -22,7 +21,7 @@
 
 <script setup>
 import { useRoute } from 'vue-router'
-import { Connection, Odometer, Link, Setting, Document, Tools } from '@element-plus/icons-vue'
+import { Connection, Odometer, Collection, Document, Tools } from '@element-plus/icons-vue'
 const route = useRoute()
 </script>
 

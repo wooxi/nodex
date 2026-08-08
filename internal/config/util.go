@@ -12,6 +12,11 @@ import (
 
 func newUUID() string { return uuid.NewString() }
 
+// newID 生成节点短 ID（n + 4 位随机 hex）
+func newID() string {
+	return "n" + randHex(2)
+}
+
 func randHex(n int) string {
 	b := make([]byte, n)
 	rand.Read(b)

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/wooxi/nodex/internal/config"
+	"github.com/wooxi/nodex/internal/manager"
 	"github.com/wooxi/nodex/internal/panel"
 	"github.com/wooxi/nodex/internal/xray"
 )
@@ -23,27 +24,21 @@ import (
 //go:embed all:dist
 var distFS embed.FS
 
-// Server Web 管理服务
+// Server Web 管理服务（多节点）
 type Server struct {
 	cfg     *config.Config
 	cfgPath string
-	xm      *xray.Manager
-	hy2     *xray.Hy2Manager
-	syncer  *panel.Syncer
-	stats   *xray.StatsCollector
+	mgr     *manager.Manager
 
 	mu       sync.Mutex
 	sessions map[string]time.Time
 }
 
-func New(cfg *config.Config, cfgPath string, xm *xray.Manager, hy2 *xray.Hy2Manager, syncer *panel.Syncer, stats *xray.StatsCollector) *Server {
+func New(cfg *config.Config, cfgPath string, mgr *manager.Manager) *Server {
 	return &Server{
 		cfg:      cfg,
 		cfgPath:  cfgPath,
-		xm:       xm,
-		hy2:      hy2,
-		syncer:   syncer,
-		stats:    stats,
+		mgr:      mgr,
 		sessions: map[string]time.Time{},
 	}
 }
@@ -51,13 +46,12 @@ func New(cfg *config.Config, cfgPath string, xm *xray.Manager, hy2 *xray.Hy2Mana
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
-	// API
 	mux.HandleFunc("/api/login", s.handleLogin)
 	mux.HandleFunc("/api/logout", s.handleLogout)
-	mux.HandleFunc("/api/hy2-auth", s.handleHy2Auth) // hysteria2 认证回调（仅限本机）
+	mux.HandleFunc("/api/hy2-auth", s.handleHy2Auth) // hysteria2 认证回调（仅本机）
 	mux.HandleFunc("/api/status", s.auth(s.handleStatus))
 	mux.HandleFunc("/api/config", s.auth(s.handleConfig))
-	mux.HandleFunc("/api/config/test", s.auth(s.handlePanelTest))
+	mux.HandleFunc("/api/nodes/test", s.auth(s.handlePanelTest))
 	mux.HandleFunc("/api/action", s.auth(s.handleAction))
 	mux.HandleFunc("/api/logs", s.auth(s.handleLogs))
 	mux.HandleFunc("/api/users", s.auth(s.handleUsers))
@@ -74,7 +68,6 @@ func (s *Server) Handler() http.Handler {
 			http.NotFound(w, r)
 			return
 		}
-		// SPA 路由回退
 		p := strings.TrimPrefix(r.URL.Path, "/")
 		if _, err := fs.Stat(sub, p); err != nil {
 			r.URL.Path = "/"
@@ -122,7 +115,6 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "参数错误"})
 		return
 	}
-	// 首次使用：设置密码
 	if s.cfg.Web.Password == "" {
 		if len(req.Password) < 6 {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "密码至少 6 位"})
@@ -158,42 +150,22 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 // ---------- API ----------
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	nodes := s.mgr.Status()
+	totalUsers := 0
+	running := 0
+	for _, n := range nodes {
+		if n["enabled"].(bool) {
+			totalUsers++
+		}
+		if n["xray"].(map[string]any)["running"].(bool) {
+			running++
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"xray": map[string]any{
-			"running": s.xm.IsRunning(),
-			"version": s.xm.Version(),
-			"pid":     s.xm.Pid(),
-		},
-		"hy2": map[string]any{
-			"running": s.hy2.IsRunning(),
-			"version": s.hy2.Version(),
-			"pid":     s.hy2.Pid(),
-		},
-		"panel":      s.syncer.Status(),
-		"configured": s.cfg.Panel.Enabled,
+		"nodes":   nodes,
+		"running": running,
+		"total":   len(nodes),
 	})
-}
-
-// handleHy2Auth hysteria2 认证回调（hysteria auth.http 模式）
-// 请求: {addr, auth, tx}  响应: {ok, id}
-// 仅允许本机回环访问
-func (s *Server) handleHy2Auth(w http.ResponseWriter, r *http.Request) {
-	if !strings.HasPrefix(r.RemoteAddr, "127.0.0.1:") && !strings.HasPrefix(r.RemoteAddr, "[::1]:") {
-		writeJSON(w, http.StatusForbidden, map[string]any{"ok": false})
-		return
-	}
-	var req struct {
-		Auth string `json:"auth"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false})
-		return
-	}
-	if uid, ok := s.hy2.AuthUser(req.Auth); ok {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": fmt.Sprintf("%d", uid)})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": false})
 }
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
@@ -206,7 +178,6 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "配置格式错误"})
 			return
 		}
-		// 密码：空则保留原值；非 bcrypt 明文则加密
 		if newCfg.Web.Password == "" {
 			newCfg.Web.Password = s.cfg.Web.Password
 		} else if !strings.HasPrefix(newCfg.Web.Password, "$2") {
@@ -222,10 +193,11 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		newCfg.EnsureDefaults()
+		// 停止旧运行时
+		s.mgr.StopAll()
 		s.cfg = &newCfg
 		s.saveConfig()
-		s.syncer.UpdateConfig(s.cfg)
-		s.xm.UpdateConfig(s.cfg)
+		s.mgr.Rebuild(s.cfg)
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "config": s.cfg})
 	default:
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method"})
@@ -269,6 +241,7 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		Action string `json:"action"` // start|stop|restart|sync
+		NodeID string `json:"node_id"` // 空 = 全部节点
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "参数错误"})
@@ -276,44 +249,29 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request) {
 	}
 	switch req.Action {
 	case "start":
-		s.syncer.Start()
-		if err := s.xm.Start(); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
-			return
+		if req.NodeID != "" {
+			if rt := s.mgr.Get(req.NodeID); rt != nil {
+				s.startOne(rt)
+			}
+		} else {
+			s.mgr.StartAll()
 		}
-		if err := s.startHy2(); err != nil {
-			log.Printf("[nodex] 启动 hysteria2 失败: %v", err)
-		}
-		go s.connectStats()
 	case "stop":
-		s.xm.Stop()
-		s.hy2.Stop()
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-		return
+		if req.NodeID != "" {
+			s.mgr.Stop(req.NodeID)
+		} else {
+			s.mgr.StopAll()
+		}
 	case "restart":
-		s.syncer.Start()
-		if err := s.xm.Restart(); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
-			return
+		if req.NodeID != "" {
+			s.mgr.Restart(req.NodeID)
+		} else {
+			s.mgr.StopAll()
+			time.Sleep(300 * time.Millisecond)
+			s.mgr.StartAll()
 		}
-		s.hy2.Stop()
-		if err := s.startHy2(); err != nil {
-			log.Printf("[nodex] 启动 hysteria2 失败: %v", err)
-		}
-		s.stats.Reset()
-		s.syncer.ResetHy2()
-		go s.connectStats()
 	case "sync":
-		go func() {
-			s.syncer.Start()
-			s.xm.Restart()
-			s.hy2.Stop()
-			s.startHy2()
-			s.stats.Reset()
-			s.syncer.ResetHy2()
-		}()
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "已触发同步并重启节点"})
-		return
+		s.mgr.SyncAll()
 	default:
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "未知操作"})
 		return
@@ -321,39 +279,67 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// startHy2 启动 hysteria2（需要 hysteria 二进制 + 证书）
-func (s *Server) startHy2() error {
-	// 本地模式：注入本地用户
-	if !s.cfg.Panel.Enabled && s.cfg.Node.UUID != "" {
-		s.hy2.SetUsers([]xray.User{{ID: 1, UUID: s.cfg.Node.UUID}})
+// startOne 启动单节点（含认证信息注入）
+func (s *Server) startOne(rt *manager.Runtime) {
+	rt.Hy2.SetAuth(fmt.Sprintf("http://127.0.0.1:%d/api/hy2-auth?node=%s", s.cfg.Web.Port, rt.Cfg.ID), rt.Syncer.Hy2Secret())
+	if !rt.Cfg.Panel.Enabled && rt.Cfg.Node.UUID != "" {
+		rt.Xray.SetUsers([]xray.User{{ID: 1, UUID: rt.Cfg.Node.UUID}})
+		rt.Hy2.SetUsers([]xray.User{{ID: 1, UUID: rt.Cfg.Node.UUID}})
 	}
-	return s.hy2.Start(s.hy2AuthURL(), s.syncer.Hy2Secret())
+	rt.Syncer.Start()
+	if err := rt.Xray.Start(); err != nil {
+		log.Printf("[nodex][%s] 启动 xray 失败: %v", rt.Cfg.ID, err)
+	} else {
+		// 触发一次同步（应用面板配置）
+		go func() {
+			time.Sleep(1 * time.Second)
+			rt.Syncer.Start()
+		}()
+	}
+	if err := rt.Hy2.Start(); err != nil {
+		log.Printf("[nodex][%s] 启动 hysteria2 失败: %v", rt.Cfg.ID, err)
+	}
 }
 
-// hy2AuthURL hysteria 认证回调地址
-func (s *Server) hy2AuthURL() string {
-	return fmt.Sprintf("http://127.0.0.1:%d/api/hy2-auth", s.cfg.Web.Port)
-}
-
-// connectStats 连接 xray 的 gRPC stats API（带重试，等待 xray 就绪）
-func (s *Server) connectStats() {
-	for i := 0; i < 15; i++ {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		err := s.stats.Connect(ctx, "127.0.0.1:10085")
-		cancel()
-		if err == nil {
-			log.Printf("[nodex] 已连接 xray API")
-			return
-		}
-		time.Sleep(2 * time.Second)
+// handleHy2Auth hysteria2 认证回调（auth.http 模式）
+// 请求: {addr, auth, tx}  响应: {ok, id}；node 参数指定节点
+func (s *Server) handleHy2Auth(w http.ResponseWriter, r *http.Request) {
+	if !strings.HasPrefix(r.RemoteAddr, "127.0.0.1:") && !strings.HasPrefix(r.RemoteAddr, "[::1]:") {
+		writeJSON(w, http.StatusForbidden, map[string]any{"ok": false})
+		return
 	}
-	log.Printf("[nodex] 连接 xray API 失败（15 次重试后放弃）")
+	nodeID := r.URL.Query().Get("node")
+	rt := s.mgr.Get(nodeID)
+	if rt == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false})
+		return
+	}
+	var req struct {
+		Auth string `json:"auth"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false})
+		return
+	}
+	if uid, ok := rt.Hy2.AuthUser(req.Auth); ok {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": fmt.Sprintf("%d", uid)})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": false})
 }
 
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
-	path := s.cfg.XrayErrorLogPath()
+	nodeID := r.URL.Query().Get("node")
+	rt := s.mgr.Get(nodeID)
+	if rt == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"logs": ""})
+		return
+	}
+	var path string
 	if r.URL.Query().Get("type") == "access" {
-		path = s.cfg.XrayLogPath()
+		path = rt.Dir + "/xray/access.log"
+	} else {
+		path = rt.Dir + "/xray/error.log"
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -368,42 +354,28 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
+	nodeID := r.URL.Query().Get("node")
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	traffic, err := s.stats.GetTraffic(ctx)
-	if err != nil {
-		log.Printf("[nodex] xray stats: %v", err)
-		traffic = map[int64]xray.Traffic{}
-	}
-	log.Printf("[nodex] xray stats 返回 %d 个用户", len(traffic))
-	// 合并 hysteria2 流量
-	hy2t, err := s.hy2.FetchTraffic(ctx, s.syncer.Hy2Secret())
-	if err != nil {
-		log.Printf("[nodex] hy2 traffic: %v", err)
-	}
-	for uid, t := range hy2t {
-		if v, ok := traffic[uid]; ok {
-			v.Up += t.Up
-			v.Down += t.Down
-			traffic[uid] = v
-		} else {
-			traffic[uid] = t
+	if nodeID == "" {
+		// 全部节点汇总
+		all := []map[string]any{}
+		for _, rt := range s.mgr.Runtimes() {
+			for _, u := range rt.Users(ctx) {
+				u["node"] = rt.Cfg.ID
+				u["node_name"] = rt.Cfg.Name
+				all = append(all, u)
+			}
 		}
+		writeJSON(w, http.StatusOK, map[string]any{"users": all})
+		return
 	}
-	alive := s.syncer.AliveUsers()
-	type userInfo struct {
-		UID     int64  `json:"uid"`
-		Up      int64  `json:"up"`
-		Down    int64  `json:"down"`
-		Traffic int64  `json:"traffic"`
-		IPs     []string `json:"ips"`
+	rt := s.mgr.Get(nodeID)
+	if rt == nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "节点不存在"})
+		return
 	}
-	out := []userInfo{}
-	for uid, v := range traffic {
-		ips := alive[uid]
-		out = append(out, userInfo{UID: uid, Up: v.Up, Down: v.Down, Traffic: v.Up + v.Down, IPs: ips})
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"users": out})
+	writeJSON(w, http.StatusOK, map[string]any{"users": rt.Users(ctx)})
 }
 
 func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {

@@ -17,20 +17,34 @@ import (
 	"github.com/wooxi/nodex/internal/config"
 )
 
-// Hy2Manager 管理 hysteria2 进程（官方 hysteria 二进制）
+// Hy2Manager 管理单个节点的 hysteria2 进程（官方 hysteria 二进制）
 // 认证采用 auth.http 模式回调 NodeX，实现 per-user 流量统计：
 //   客户端 auth = 用户 uuid → NodeX 认证 API 返回 {ok, id: uid} → /traffic 按 uid 统计
 type Hy2Manager struct {
-	cfg   *config.Config
-	cmd   *exec.Cmd
-	users []User // uid -> uuid 映射
+	cfg      *config.Node // 节点配置
+	global   *config.Config
+	dir      string // 节点数据目录
+	apiPort  int    // traffic API 端口
+	authURL  string // 认证回调地址
+	secret   string // traffic API 密钥
+	cmd      *exec.Cmd
+	users    []User // uid -> uuid 映射
 }
 
-func NewHy2Manager(cfg *config.Config) *Hy2Manager {
-	return &Hy2Manager{cfg: cfg}
+func NewHy2Manager(node *config.Node, global *config.Config, dir string, apiPort int) *Hy2Manager {
+	return &Hy2Manager{cfg: node, global: global, dir: dir, apiPort: apiPort}
 }
 
-func (m *Hy2Manager) UpdateConfig(cfg *config.Config) { m.cfg = cfg }
+func (m *Hy2Manager) UpdateConfig(node *config.Node, global *config.Config) {
+	m.cfg = node
+	m.global = global
+}
+
+// SetAuth 设置认证回调与 traffic API 密钥
+func (m *Hy2Manager) SetAuth(authURL, secret string) {
+	m.authURL = authURL
+	m.secret = secret
+}
 
 // SetUsers 注入用户列表（用于认证回调）
 func (m *Hy2Manager) SetUsers(users []User) { m.users = users }
@@ -45,9 +59,9 @@ func (m *Hy2Manager) AuthUser(auth string) (int64, bool) {
 	return 0, false
 }
 
-func (m *Hy2Manager) configPath() string { return filepath.Join(m.cfg.DataDir(), "hy2", "config.yaml") }
-func (m *Hy2Manager) logPath() string    { return filepath.Join(m.cfg.DataDir(), "hy2", "hy2.log") }
-func (m *Hy2Manager) pidFile() string    { return filepath.Join(m.cfg.DataDir(), "hy2", "hy2.pid") }
+func (m *Hy2Manager) configPath() string { return filepath.Join(m.dir, "hy2", "config.yaml") }
+func (m *Hy2Manager) logPath() string    { return filepath.Join(m.dir, "hy2", "hy2.log") }
+func (m *Hy2Manager) pidFile() string    { return filepath.Join(m.dir, "hy2", "hy2.pid") }
 
 func (m *Hy2Manager) IsRunning() bool {
 	if m.cmd != nil && m.cmd.Process != nil {
@@ -75,9 +89,14 @@ func (m *Hy2Manager) Pid() int {
 // BuildConfig 生成 hysteria2 服务器配置（YAML）
 func (m *Hy2Manager) BuildConfig(authURL, trafficSecret string) (string, error) {
 	cfg := m.cfg.Node.Hy2
+	cert, key := cfg.CertPath, cfg.KeyPath
+	if cert == "" {
+		cert = m.global.System.CertPath
+		key = m.global.System.KeyPath
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "listen: 0.0.0.0:%d\n", cfg.Port)
-	fmt.Fprintf(&b, "tls:\n  cert: %s\n  key: %s\n", cfg.CertPath, cfg.KeyPath)
+	fmt.Fprintf(&b, "tls:\n  cert: %s\n  key: %s\n", cert, key)
 	if cfg.IgnoreBW {
 		b.WriteString("ignoreClientBandwidth: true\n")
 	} else {
@@ -90,17 +109,17 @@ func (m *Hy2Manager) BuildConfig(authURL, trafficSecret string) (string, error) 
 	b.WriteString("auth:\n  type: http\n  http:\n    url: " + authURL + "\n")
 	// 流量统计 API
 	b.WriteString("trafficStats:\n")
-	fmt.Fprintf(&b, "  listen: 127.0.0.1:%d\n", 8444)
+	fmt.Fprintf(&b, "  listen: 127.0.0.1:%d\n", m.apiPort)
 	fmt.Fprintf(&b, "  secret: %s\n", trafficSecret)
 	return b.String(), nil
 }
 
 // Start 生成配置并启动 hysteria2
-func (m *Hy2Manager) Start(authURL, trafficSecret string) error {
+func (m *Hy2Manager) Start() error {
 	if m.IsRunning() {
 		return nil
 	}
-	conf, err := m.BuildConfig(authURL, trafficSecret)
+	conf, err := m.BuildConfig(m.authURL, m.secret)
 	if err != nil {
 		return err
 	}
@@ -111,7 +130,7 @@ func (m *Hy2Manager) Start(authURL, trafficSecret string) error {
 	if err := os.WriteFile(confPath, []byte(conf), 0o600); err != nil {
 		return err
 	}
-	bin := m.cfg.Node.Hy2.BinPath
+	bin := m.global.System.HysteriaPath
 	if _, err := os.Stat(bin); err != nil {
 		return fmt.Errorf("hysteria 可执行文件不存在: %s", bin)
 	}
@@ -128,28 +147,27 @@ func (m *Hy2Manager) Start(authURL, trafficSecret string) error {
 	return nil
 }
 
+// Stop 停止 hysteria2（同步等待退出）
 func (m *Hy2Manager) Stop() error {
-	if m.cmd != nil && m.cmd.Process != nil {
-		m.cmd.Process.Signal(syscall.SIGTERM)
-		done := make(chan struct{})
-		go func() { m.cmd.Wait(); close(done) }()
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second):
-			m.cmd.Process.Kill()
+	pid := m.Pid()
+	if pid > 0 {
+		syscall.Kill(pid, syscall.SIGTERM)
+		for i := 0; i < 50; i++ {
+			if syscall.Kill(pid, 0) != nil {
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
 		}
-		m.cmd = nil
-	} else if data, err := os.ReadFile(m.pidFile()); err == nil {
-		if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
-			syscall.Kill(pid, syscall.SIGTERM)
-		}
+		syscall.Kill(pid, syscall.SIGKILL)
+		time.Sleep(200 * time.Millisecond)
 	}
+	m.cmd = nil
 	os.Remove(m.pidFile())
 	return nil
 }
 
 func (m *Hy2Manager) Version() string {
-	out, err := exec.Command(m.cfg.Node.Hy2.BinPath, "version").Output()
+	out, err := exec.Command(m.global.System.HysteriaPath, "version").Output()
 	if err != nil {
 		return "未知"
 	}
@@ -168,13 +186,13 @@ type Hy2Traffic struct {
 }
 
 // FetchTraffic 从 hysteria /traffic API 拉取 per-user 流量（uid -> Traffic）
-func (m *Hy2Manager) FetchTraffic(ctx context.Context, secret string) (map[int64]Traffic, error) {
-	url := fmt.Sprintf("http://127.0.0.1:%d/traffic", 8444)
+func (m *Hy2Manager) FetchTraffic(ctx context.Context) (map[int64]Traffic, error) {
+	url := fmt.Sprintf("http://127.0.0.1:%d/traffic", m.apiPort)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", secret)
+	req.Header.Set("Authorization", m.secret)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -200,8 +218,8 @@ func (m *Hy2Manager) FetchTraffic(ctx context.Context, secret string) (map[int64
 }
 
 // SnapshotAndDiff 计算 hysteria2 流量增量
-func (m *Hy2Manager) SnapshotAndDiff(ctx context.Context, secret string, last *map[int64]Traffic) (map[int64]Traffic, error) {
-	cur, err := m.FetchTraffic(ctx, secret)
+func (m *Hy2Manager) SnapshotAndDiff(ctx context.Context, last *map[int64]Traffic) (map[int64]Traffic, error) {
+	cur, err := m.FetchTraffic(ctx)
 	if err != nil {
 		return nil, err
 	}

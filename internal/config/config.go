@@ -5,77 +5,85 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strconv"
 )
 
 // Config 是 NodeX 的完整配置，由 Web 前端表单生成，用户不直接编辑 JSON。
+// 多节点架构：system/web 为全局配置，nodes 为节点列表（每个节点独立面板对接与协议配置）。
 type Config struct {
 	Web    WebConfig    `json:"web"`
-	Panel  PanelConfig  `json:"panel"`
-	Node   NodeConfig   `json:"node"`
 	System SystemConfig `json:"system"`
+	Nodes  []*Node      `json:"nodes"`
 }
 
 type WebConfig struct {
 	Port     int    `json:"port"`     // Web 管理端口
-	Password string `json:"password"` // 管理密码明文（保存时存 hash，见 HashPassword）
+	Password string `json:"password"` // 管理密码（bcrypt hash）
+}
+
+type SystemConfig struct {
+	XrayPath      string `json:"xray_path"`      // xray 可执行文件路径
+	HysteriaPath  string `json:"hysteria_path"`  // hysteria 可执行文件路径
+	LogLevel      string `json:"log_level"`      // debug|info|warning|error
+	DataDir       string `json:"data_dir"`       // 数据目录（配置/xray 配置/日志）
+	CertPath      string `json:"cert_path"`      // hysteria2 默认证书路径
+	KeyPath       string `json:"key_path"`       // hysteria2 默认私钥路径
+	APIPortBase   int    `json:"api_port_base"`  // xray gRPC API 起始端口（每节点 +1）
+	Hy2APIPortBase int   `json:"hy2_api_port_base"` // hysteria traffic API 起始端口
+}
+
+// Node 单个节点配置
+type Node struct {
+	ID      string      `json:"id"`      // 唯一标识（如 n1）
+	Name    string      `json:"name"`    // 显示名称
+	Enabled bool        `json:"enabled"` // 是否启用
+	Panel   PanelConfig `json:"panel"`   // 面板对接
+	Node    NodeConfig  `json:"node"`    // 协议配置
 }
 
 type PanelConfig struct {
 	Enabled      bool   `json:"enabled"`       // 是否启用面板对接
-	URL          string `json:"url"`           // 面板地址，如 http://192.168.100.4:7001
+	URL          string `json:"url"`           // 面板地址
 	Token        string `json:"token"`         // 面板通信密钥
 	NodeID       int    `json:"node_id"`       // 面板节点 ID
-	NodeType     string `json:"node_type"`     // 节点类型（vless/trojan/shadowsocks/vmess/hysteria），留空由面板返回决定
-	PullInterval int    `json:"pull_interval"` // 拉取配置/用户间隔（秒）
-	PushInterval int    `json:"push_interval"` // 推送流量/心跳间隔（秒）
+	NodeType     string `json:"node_type"`     // 节点类型，留空由面板返回决定
+	PullInterval int    `json:"pull_interval"` // 拉取间隔（秒）
+	PushInterval int    `json:"push_interval"` // 上报间隔（秒）
 }
 
 type NodeConfig struct {
-	// 本地模式协议（面板模式下面板配置优先）
 	Protocol string `json:"protocol"` // vless | vmess | trojan | shadowsocks | hysteria2
-	Port     int    `json:"port"`     // 监听端口
-	UUID     string `json:"uuid"`     // vless/vmess 用户 ID
+	Port     int    `json:"port"`     // 监听端口（面板模式下面板端口优先）
+	UUID     string `json:"uuid"`     // 本地模式用户 ID
 
-	// TLS / Reality
-	TLS        int     `json:"tls"` // 0=关闭 1=TLS 2=Reality
+	TLS        int     `json:"tls"` // 0=关闭 1=TLS 2=Reality（面板模式以面板为准）
 	CertPath   string  `json:"cert_path"`
 	KeyPath    string  `json:"key_path"`
 	ServerName string  `json:"server_name"`
 	Reality    Reality `json:"reality"`
 
-	// Hysteria2
-	Hy2 Hy2 `json:"hy2"`
-
-	// Shadowsocks
+	Hy2      Hy2    `json:"hy2"`
 	SSMethod string `json:"ss_method"`
 }
 
 type Reality struct {
-	Dest        string `json:"dest"`         // 如 www.microsoft.com:443
-	ServerNames string `json:"server_names"` // 逗号分隔
+	Dest        string `json:"dest"`
+	ServerNames string `json:"server_names"`
 	PrivateKey  string `json:"private_key"`
-	ShortIDs    string `json:"short_ids"` // 逗号分隔
-	PublicKey   string `json:"public_key"` // 只读展示用
+	ShortIDs    string `json:"short_ids"`
+	PublicKey   string `json:"public_key"` // 只读展示
 }
 
 type Hy2 struct {
 	Port         int    `json:"port"`
 	Password     string `json:"password"`
-	Obfs         string `json:"obfs"` // none | salamander
+	Obfs         string `json:"obfs"`
 	ObfsPassword string `json:"obfs_password"`
 	UpMbps       int    `json:"up_mbps"`
 	DownMbps     int    `json:"down_mbps"`
 	IgnoreBW     bool   `json:"ignore_bw"`
-	BinPath      string `json:"bin_path"` // hysteria 可执行文件路径
 	CertPath     string `json:"cert_path"`
 	KeyPath      string `json:"key_path"`
-}
-
-type SystemConfig struct {
-	XrayPath string `json:"xray_path"` // xray 可执行文件路径
-	LogLevel string `json:"log_level"` // debug|info|warning|error
-	DataDir  string `json:"data_dir"`  // 数据目录（配置/xray 配置/日志）
+	BinPath      string `json:"bin_path,omitempty"` // 兼容旧版字段
 }
 
 const DefaultConfigPath = "/etc/nodex/config.json"
@@ -83,32 +91,43 @@ const DefaultConfigPath = "/etc/nodex/config.json"
 func Default() *Config {
 	return &Config{
 		Web: WebConfig{Port: 8888},
+		System: SystemConfig{
+			XrayPath:       "/usr/bin/xray",
+			HysteriaPath:   "/usr/bin/hysteria",
+			LogLevel:       "info",
+			DataDir:        "/etc/nodex",
+			APIPortBase:    10085,
+			Hy2APIPortBase: 8444,
+		},
+		Nodes: []*Node{},
+	}
+}
+
+// DefaultNode 返回默认节点配置（新节点模板）
+func DefaultNode() *Node {
+	return &Node{
+		ID:      newID(),
+		Name:    "新节点",
+		Enabled: true,
 		Panel: PanelConfig{
 			PullInterval: 60,
 			PushInterval: 60,
 		},
 		Node: NodeConfig{
 			Protocol: "vless",
-			Port:     443,
-			TLS:      2, // reality
+			Port:     8686,
+			TLS:      0,
 			SSMethod: "2022-blake3-aes-128-gcm",
 			Reality: Reality{
 				Dest:        "www.amazon.com:443",
 				ServerNames: "www.amazon.com",
-				ShortIDs:    "",
 			},
 			Hy2: Hy2{
-				Port:     8443,
+				Port:     9443,
 				Obfs:     "none",
 				UpMbps:   100,
 				DownMbps: 1000,
-				BinPath:  "/usr/bin/hysteria",
 			},
-		},
-		System: SystemConfig{
-			XrayPath: "/usr/bin/xray",
-			LogLevel: "info",
-			DataDir:  "/etc/nodex",
 		},
 	}
 }
@@ -120,10 +139,10 @@ func (c *Config) DataDir() string {
 	return c.System.DataDir
 }
 
-func (c *Config) XrayConfigPath() string  { return filepath.Join(c.DataDir(), "xray", "config.json") }
-func (c *Config) XrayLogPath() string     { return filepath.Join(c.DataDir(), "xray", "access.log") }
-func (c *Config) XrayErrorLogPath() string { return filepath.Join(c.DataDir(), "xray", "error.log") }
-func (c *Config) XrayPidFile() string     { return filepath.Join(c.DataDir(), "xray", "xray.pid") }
+// NodeDataDir 节点数据目录（每节点独立）
+func (c *Config) NodeDataDir(n *Node) string {
+	return filepath.Join(c.DataDir(), "nodes", n.ID)
+}
 
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
@@ -136,6 +155,45 @@ func Load(path string) (*Config, error) {
 	cfg := Default()
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return nil, err
+	}
+	// 兼容旧版单节点配置：迁移到 nodes[0]
+	if len(cfg.Nodes) == 0 {
+		var legacy struct {
+			Web    WebConfig    `json:"web"`
+			System SystemConfig `json:"system"`
+			Panel  PanelConfig  `json:"panel"`
+			Node   NodeConfig   `json:"node"`
+		}
+		if err := json.Unmarshal(data, &legacy); err == nil {
+			if legacy.Panel.URL != "" || legacy.Node.Port != 0 || legacy.Node.Protocol != "" {
+				cfg.Web = legacy.Web
+				cfg.System = legacy.System
+				// 兼容旧字段：hysteria 二进制路径在 Hy2.BinPath
+				if cfg.System.HysteriaPath == "" {
+					cfg.System.HysteriaPath = legacy.Node.Hy2.BinPath
+				}
+				if cfg.System.HysteriaPath == "" {
+					cfg.System.HysteriaPath = "/usr/bin/hysteria"
+				}
+				// 证书路径迁移
+				if cfg.System.CertPath == "" {
+					cfg.System.CertPath = legacy.Node.Hy2.CertPath
+					cfg.System.KeyPath = legacy.Node.Hy2.KeyPath
+				}
+				if cfg.System.APIPortBase == 0 {
+					cfg.System.APIPortBase = 10085
+				}
+				if cfg.System.Hy2APIPortBase == 0 {
+					cfg.System.Hy2APIPortBase = 8444
+				}
+				n := DefaultNode()
+				n.ID = "n1"
+				n.Name = "节点1"
+				n.Panel = legacy.Panel
+				n.Node = legacy.Node
+				cfg.Nodes = []*Node{n}
+			}
+		}
 	}
 	return cfg, nil
 }
@@ -153,55 +211,63 @@ func (c *Config) Save(path string) error {
 
 func (c *Config) ConfigPath() string { return DefaultConfigPath }
 
-// Validate 校验表单提交的配置
+// Validate 校验配置
 func (c *Config) Validate() error {
 	if c.Web.Port < 1 || c.Web.Port > 65535 {
 		return errors.New("Web 管理端口无效")
 	}
-	if c.Panel.Enabled {
-		if c.Panel.URL == "" {
-			return errors.New("面板地址不能为空")
-		}
-		if c.Panel.Token == "" {
-			return errors.New("面板通信密钥不能为空")
-		}
-		if c.Panel.NodeID <= 0 {
-			return errors.New("节点 ID 必须大于 0")
-		}
+	if len(c.Nodes) == 0 {
+		return errors.New("至少需要配置一个节点")
 	}
-	switch c.Node.Protocol {
-	case "vless", "vmess", "trojan", "shadowsocks", "hysteria2":
-	default:
-		return errors.New("不支持的协议: " + c.Node.Protocol)
-	}
-	if c.Node.Port < 1 || c.Node.Port > 65535 {
-		return errors.New("节点端口无效")
-	}
-	if c.Node.TLS == 2 && c.Node.Reality.PrivateKey == "" {
-		return errors.New("Reality 私钥不能为空（可点击自动生成）")
+	seen := map[string]bool{}
+	for _, n := range c.Nodes {
+		if n.ID == "" {
+			return errors.New("节点 ID 不能为空")
+		}
+		if seen[n.ID] {
+			return errors.New("节点 ID 重复: " + n.ID)
+		}
+		seen[n.ID] = true
+		if n.Panel.Enabled {
+			if n.Panel.URL == "" {
+				return errors.New("节点 [" + n.Name + "] 面板地址不能为空")
+			}
+			if n.Panel.Token == "" {
+				return errors.New("节点 [" + n.Name + "] 通信密钥不能为空")
+			}
+			if n.Panel.NodeID <= 0 {
+				return errors.New("节点 [" + n.Name + "] 节点 ID 必须大于 0")
+			}
+		}
+		switch n.Node.Protocol {
+		case "vless", "vmess", "trojan", "shadowsocks", "hysteria2":
+		default:
+			return errors.New("节点 [" + n.Name + "] 不支持的协议: " + n.Node.Protocol)
+		}
+		if n.Node.Port < 1 || n.Node.Port > 65535 {
+			return errors.New("节点 [" + n.Name + "] 端口无效")
+		}
 	}
 	return nil
 }
 
-// EnsureDefaults 填充空字段的默认值（如自动生成 UUID）
+// EnsureDefaults 填充空字段默认值
 func (c *Config) EnsureDefaults() {
-	if c.Node.UUID == "" {
-		c.Node.UUID = newUUID()
+	for _, n := range c.Nodes {
+		if n.Node.UUID == "" {
+			n.Node.UUID = newUUID()
+		}
+		if n.Node.Hy2.Password == "" {
+			n.Node.Hy2.Password = randHex(16)
+		}
+		if n.Node.Hy2.ObfsPassword == "" && n.Node.Hy2.Obfs == "salamander" {
+			n.Node.Hy2.ObfsPassword = randHex(8)
+		}
+		if n.Panel.PullInterval == 0 {
+			n.Panel.PullInterval = 60
+		}
+		if n.Panel.PushInterval == 0 {
+			n.Panel.PushInterval = 60
+		}
 	}
-	if c.Node.Hy2.Password == "" {
-		c.Node.Hy2.Password = randHex(16)
-	}
-	if c.Node.Hy2.ObfsPassword == "" && c.Node.Hy2.Obfs == "salamander" {
-		c.Node.Hy2.ObfsPassword = randHex(8)
-	}
-}
-
-func IntOr(s string, def int) int {
-	if s == "" {
-		return def
-	}
-	if n, err := strconv.Atoi(s); err == nil {
-		return n
-	}
-	return def
 }

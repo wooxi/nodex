@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -20,11 +21,13 @@ import (
 	"github.com/wooxi/nodex/internal/xray"
 )
 
-// Syncer 面板同步器：定时拉配置/用户，推送流量/心跳/状态
-// 流量来源：xray gRPC stats + hysteria2 /traffic API，合并后按 Xboard 格式推送
+// Syncer 节点同步器：定时拉配置/用户，推送流量/心跳/状态
+// 每个节点独立实例。流量来源：xray gRPC stats + hysteria2 /traffic API，合并后按 Xboard 格式推送
 //   push 格式: {uid: [upload, download]}
 type Syncer struct {
-	cfg       *config.Config
+	node      *config.Node
+	global    *config.Config
+	nodeDir   string
 	panel     *Client
 	xm        *xray.Manager
 	hy2       *xray.Hy2Manager
@@ -42,26 +45,33 @@ type Syncer struct {
 	lastErr  string
 }
 
-func NewSyncer(cfg *config.Config, xm *xray.Manager, hy2 *xray.Hy2Manager, stats *xray.StatsCollector) *Syncer {
+func NewSyncer(node *config.Node, global *config.Config, nodeDir string, xm *xray.Manager, hy2 *xray.Hy2Manager, stats *xray.StatsCollector) *Syncer {
 	return &Syncer{
-		cfg:       cfg,
-		panel:     NewClient(&cfg.Panel),
+		node:      node,
+		global:    global,
+		nodeDir:   nodeDir,
+		panel:     NewClient(&node.Panel),
 		xm:        xm,
 		hy2:       hy2,
 		stats:     stats,
-		accessLog: NewAccessLog(cfg),
+		accessLog: NewAccessLog(nodeDir),
 		hy2Last:   map[int64]xray.Traffic{},
 	}
 }
 
-func (s *Syncer) UpdateConfig(cfg *config.Config) {
+func (s *Syncer) UpdateConfig(node *config.Node, global *config.Config) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.cfg = cfg
-	s.panel = NewClient(&cfg.Panel)
-	s.accessLog.UpdateConfig(cfg)
-	s.xm.UpdateConfig(cfg)
-	s.hy2.UpdateConfig(cfg)
+	s.node = node
+	s.global = global
+	s.panel = NewClient(&node.Panel)
+	s.accessLog.UpdateConfig(nodeDirOf(node, global))
+	s.xm.UpdateConfig(node, global)
+	s.hy2.UpdateConfig(node, global)
+}
+
+func nodeDirOf(node *config.Node, global *config.Config) string {
+	return global.NodeDataDir(node)
 }
 
 // Start 启动后台同步循环
@@ -118,10 +128,11 @@ func (s *Syncer) Status() map[string]any {
 // syncOnce 执行一轮完整同步
 func (s *Syncer) syncOnce() {
 	s.mu.Lock()
-	cfg := s.cfg
+	node := s.node
+	global := s.global
 	s.mu.Unlock()
 
-	if !cfg.Panel.Enabled {
+	if !node.Panel.Enabled {
 		return
 	}
 
@@ -168,9 +179,9 @@ func (s *Syncer) syncOnce() {
 	}
 
 	// 3. 若面板指定了协议且本地未显式覆盖，采用面板协议
-	if remote.Protocol != "" && cfg.Panel.NodeType == "" {
-		cfg.Panel.NodeType = remote.Protocol
-		s.xm.UpdateConfig(cfg)
+	if remote.Protocol != "" && node.Panel.NodeType == "" {
+		node.Panel.NodeType = remote.Protocol
+		s.xm.UpdateConfig(node, global)
 	}
 
 	// 3.5 配置指纹变化时重启 xray（使 remote/users 生效）
@@ -197,7 +208,7 @@ func (s *Syncer) syncOnce() {
 	for uid, d := range xdiff {
 		diffs[uid] = d
 	}
-	hdiff, err := s.hy2.SnapshotAndDiff(ctx, s.hy2Secret(), &s.hy2Last)
+	hdiff, err := s.hy2.SnapshotAndDiff(ctx, &s.hy2Last)
 	if err == nil {
 		for uid, d := range hdiff {
 			if v, ok := diffs[uid]; ok {
@@ -304,9 +315,9 @@ func (s *Syncer) ResetHy2() {
 	s.hy2Last = map[int64]xray.Traffic{}
 }
 
-// hy2Secret 生成稳定的 hysteria traffic API 密钥（从配置派生，重启不变）
+// hy2Secret 生成稳定的 hysteria traffic API 密钥（按节点派生，重启不变）
 func (s *Syncer) hy2Secret() string {
-	h := sha256.Sum256([]byte("nodex-hy2:" + s.cfg.System.DataDir + ":" + s.cfg.Web.Password))
+	h := sha256.Sum256([]byte("nodex-hy2:" + s.global.System.DataDir + ":" + s.node.ID + ":" + s.global.Web.Password))
 	return hex.EncodeToString(h[:16])
 }
 
@@ -319,19 +330,19 @@ type AccessLog struct {
 	users   map[int64]string               // uid -> uuid
 }
 
-func NewAccessLog(cfg *config.Config) *AccessLog {
+func NewAccessLog(nodeDir string) *AccessLog {
 	return &AccessLog{
-		path:    cfg.XrayLogPath(),
+		path:    filepath.Join(nodeDir, "xray", "access.log"),
 		offsets: map[int64]int64{},
 		alive:   map[int64]map[string]time.Time{},
 		users:   map[int64]string{},
 	}
 }
 
-func (a *AccessLog) UpdateConfig(cfg *config.Config) {
+func (a *AccessLog) UpdateConfig(nodeDir string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.path = cfg.XrayLogPath()
+	a.path = filepath.Join(nodeDir, "xray", "access.log")
 }
 
 func (a *AccessLog) SetUsers(users []xray.User) {
@@ -396,8 +407,18 @@ func (a *AccessLog) Parse() {
 	}
 }
 
-// findUID 从日志行提取 uid（[uid@nodex]）
+// findUID 从日志行提取 uid
+// 新格式: ... accepted tcp:... [in-main >> direct] email: 1@nodex
+// 旧格式: ... accepted tcp:... [1@nodex] / [email@...]
 func (a *AccessLog) findUID(line string) int64 {
+	// 新格式：email: uid@nodex
+	if idx := strings.Index(line, "email: "); idx >= 0 {
+		email := strings.TrimSpace(line[idx+len("email: "):])
+		if uid, ok := xray.ParseEmail(email); ok {
+			return uid
+		}
+	}
+	// 旧格式：[uid@nodex]
 	idx := strings.Index(line, "[")
 	if idx < 0 {
 		return 0

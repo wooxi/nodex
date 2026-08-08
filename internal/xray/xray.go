@@ -18,12 +18,16 @@ import (
 	"github.com/wooxi/nodex/internal/config"
 )
 
-// Manager 管理 xray 进程的生命周期与配置生成
+// Manager 管理单个节点的 xray 进程生命周期与配置生成
+// 每个节点独立进程、独立数据目录、独立 API 端口
 type Manager struct {
-	cfg    *config.Config
-	cmd    *exec.Cmd
-	users  []User // 面板用户（由同步器注入）
-	remote *RemoteConfig // 面板返回的节点配置（端口/网络/TLS）
+	cfg     *config.Node // 节点配置
+	global  *config.Config
+	dir     string // 节点数据目录
+	apiPort int    // gRPC stats 端口
+	cmd     *exec.Cmd
+	users   []User // 面板用户（由同步器注入）
+	remote  *RemoteConfig // 面板返回的节点配置（端口/网络/TLS）
 }
 
 // RemoteConfig 面板返回的节点参数（由同步器注入）
@@ -38,8 +42,8 @@ type RemoteConfig struct {
 	WSPath     string
 }
 
-func NewManager(cfg *config.Config) *Manager {
-	return &Manager{cfg: cfg}
+func NewManager(node *config.Node, global *config.Config, dir string, apiPort int) *Manager {
+	return &Manager{cfg: node, global: global, dir: dir, apiPort: apiPort}
 }
 
 // SetUsers 注入面板用户列表
@@ -49,7 +53,10 @@ func (m *Manager) SetUsers(users []User) { m.users = users }
 func (m *Manager) SetRemoteConfig(r *RemoteConfig) { m.remote = r }
 
 // UpdateConfig 以新配置重建（进程不重启，由外部调用 Restart）
-func (m *Manager) UpdateConfig(cfg *config.Config) { m.cfg = cfg }
+func (m *Manager) UpdateConfig(node *config.Node, global *config.Config) {
+	m.cfg = node
+	m.global = global
+}
 
 // IsRunning 检查 xray 进程是否存活
 func (m *Manager) IsRunning() bool {
@@ -65,8 +72,13 @@ func (m *Manager) IsRunning() bool {
 	return m.cmd.ProcessState == nil || !m.cmd.ProcessState.Exited()
 }
 
+func (m *Manager) configPath() string { return filepath.Join(m.dir, "xray", "config.json") }
+func (m *Manager) logPath() string        { return filepath.Join(m.dir, "xray", "access.log") }
+func (m *Manager) errLogPath() string     { return filepath.Join(m.dir, "xray", "error.log") }
+func (m *Manager) pidFile() string        { return filepath.Join(m.dir, "xray", "xray.pid") }
+
 func (m *Manager) readPID() int {
-	data, err := os.ReadFile(m.cfg.XrayPidFile())
+	data, err := os.ReadFile(m.pidFile())
 	if err != nil {
 		return 0
 	}
@@ -86,7 +98,7 @@ func (m *Manager) Pid() int {
 }
 
 func (m *Manager) writePID(pid int) {
-	os.WriteFile(m.cfg.XrayPidFile(), []byte(strconv.Itoa(pid)), 0o644)
+	os.WriteFile(m.pidFile(), []byte(strconv.Itoa(pid)), 0o644)
 }
 
 // Start 生成配置并启动 xray
@@ -98,7 +110,7 @@ func (m *Manager) Start() error {
 	if err != nil {
 		return fmt.Errorf("生成 xray 配置失败: %w", err)
 	}
-	confPath := m.cfg.XrayConfigPath()
+	confPath := m.configPath()
 	if err := os.MkdirAll(filepath.Dir(confPath), 0o755); err != nil {
 		return err
 	}
@@ -106,15 +118,15 @@ func (m *Manager) Start() error {
 		return err
 	}
 
-	bin := m.cfg.System.XrayPath
+	bin := m.global.System.XrayPath
 	if _, err := os.Stat(bin); err != nil {
 		return fmt.Errorf("xray 可执行文件不存在: %s", bin)
 	}
 
-	logDir := filepath.Dir(m.cfg.XrayLogPath())
+	logDir := filepath.Dir(m.logPath())
 	os.MkdirAll(logDir, 0o755)
-	accessF, _ := os.OpenFile(m.cfg.XrayLogPath(), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-	errF, _ := os.OpenFile(m.cfg.XrayErrorLogPath(), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	accessF, _ := os.OpenFile(m.logPath(), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	errF, _ := os.OpenFile(m.errLogPath(), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 
 	cmd := exec.Command(bin, "run", "-c", confPath)
 	cmd.Stdout = accessF
@@ -128,24 +140,24 @@ func (m *Manager) Start() error {
 	return nil
 }
 
-// Stop 停止 xray
+// Stop 停止 xray（同步等待退出，确保端口释放）
 func (m *Manager) Stop() error {
-	if m.cmd != nil && m.cmd.Process != nil {
-		m.cmd.Process.Signal(syscall.SIGTERM)
-		done := make(chan struct{})
-		go func() { m.cmd.Wait(); close(done) }()
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second):
-			m.cmd.Process.Kill()
-		}
-		m.cmd = nil
-	} else if pid := m.readPID(); pid > 0 {
+	pid := m.Pid()
+	if pid > 0 {
 		syscall.Kill(pid, syscall.SIGTERM)
-		time.Sleep(500 * time.Millisecond)
+		// 等待优雅退出（最多 5 秒）
+		for i := 0; i < 50; i++ {
+			if syscall.Kill(pid, 0) != nil {
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		// 强制终止
 		syscall.Kill(pid, syscall.SIGKILL)
+		time.Sleep(200 * time.Millisecond)
 	}
-	os.Remove(m.cfg.XrayPidFile())
+	m.cmd = nil
+	os.Remove(m.pidFile())
 	return nil
 }
 
@@ -158,7 +170,7 @@ func (m *Manager) Restart() error {
 
 // Version 获取 xray 版本
 func (m *Manager) Version() string {
-	bin := m.cfg.System.XrayPath
+	bin := m.global.System.XrayPath
 	out, err := exec.Command(bin, "version").Output()
 	if err != nil {
 		return "未知"
@@ -208,10 +220,9 @@ type inbound struct {
 
 // BuildConfig 根据当前配置 + 面板用户生成 xray 配置 JSON
 func (m *Manager) BuildConfig() ([]byte, error) {
-	cfg := m.cfg
 	users := m.users // 由 Panel 同步器注入
 
-	logLevel := cfg.System.LogLevel
+	logLevel := m.global.System.LogLevel
 	if logLevel == "" {
 		logLevel = "info"
 	}
@@ -219,12 +230,12 @@ func (m *Manager) BuildConfig() ([]byte, error) {
 	out := map[string]any{
 		"log": map[string]any{
 			"loglevel": logLevel,
-			"access":   cfg.XrayLogPath(),
-			"error":    cfg.XrayErrorLogPath(),
+			"access":   m.logPath(),
+			"error":    m.errLogPath(),
 		},
 		"api": map[string]any{
 			"tag":      "api",
-			"listen":   "127.0.0.1:10085", // 新版 commander 独立监听，无需 dokodemo-door inbound
+			"listen":   fmt.Sprintf("127.0.0.1:%d", m.apiPort), // 新版 commander 独立监听
 			"services": []string{"StatsService"},
 		},
 		"stats": map[string]any{},
@@ -254,7 +265,7 @@ func (m *Manager) BuildConfig() ([]byte, error) {
 	}
 
 	inbounds := []any{}
-	if cfg.Panel.Enabled && len(users) > 0 {
+	if m.cfg.Panel.Enabled && len(users) > 0 {
 		inbounds = append(inbounds, m.buildPanelInbound(users)...)
 	} else {
 		inbounds = append(inbounds, m.buildLocalInbound()...)
@@ -287,12 +298,12 @@ func (m *Manager) buildLocalInbound() []any {
 
 // buildPanelInbound 面板模式：按面板返回的节点配置生成入站（hysteria2 由独立进程管理）
 func (m *Manager) buildPanelInbound(users []User) []any {
-	cfg := m.cfg
+	cfg := m.cfg.Node
 	var inbounds []any
 
 	// 面板模式：端口/网络/TLS 以面板返回为准（本地 Reality 参数作为补充）
-	port := cfg.Node.Port
-	tlsMode := cfg.Node.TLS
+	port := cfg.Port
+	tlsMode := cfg.TLS
 	network := "tcp"
 	if m.remote != nil {
 		if m.remote.Port > 0 {
@@ -308,15 +319,15 @@ func (m *Manager) buildPanelInbound(users []User) []any {
 	}
 
 	node := config.NodeConfig{
-		Protocol:   cfg.Panel.NodeType,
+		Protocol:   m.cfg.Panel.NodeType,
 		Port:       port,
 		UUID:       "",
 		TLS:        tlsMode,
-		CertPath:   cfg.Node.CertPath,
-		KeyPath:    cfg.Node.KeyPath,
-		ServerName: cfg.Node.ServerName,
-		Reality:    cfg.Node.Reality,
-		SSMethod:   cfg.Node.SSMethod,
+		CertPath:   cfg.CertPath,
+		KeyPath:    cfg.KeyPath,
+		ServerName: cfg.ServerName,
+		Reality:    cfg.Reality,
+		SSMethod:   cfg.SSMethod,
 	}
 	if node.Protocol != "hysteria2" && node.Protocol != "hysteria" {
 		inbounds = append(inbounds, m.xrayInboundWithNetwork(node, users, network, m.remote))

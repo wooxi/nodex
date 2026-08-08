@@ -1,62 +1,67 @@
 <template>
   <div>
-    <!-- 状态卡片 -->
+    <!-- 总览卡片 -->
     <div class="stat-row">
       <div class="stat-card">
-        <div class="stat-label">Xray 节点状态</div>
-        <div class="stat-value">
-          <el-tag :type="status.xray && status.xray.running ? 'success' : 'danger'" size="large">
-            {{ status.xray && status.xray.running ? '运行中' : '已停止' }}
-          </el-tag>
-        </div>
-        <div class="stat-sub">PID: {{ status.xray && status.xray.pid || '-' }}</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">Xray 版本</div>
-        <div class="stat-value version">{{ status.xray ? status.xray.version : '-' }}</div>
-        <div class="stat-sub">可执行文件</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">面板对接</div>
-        <div class="stat-value">
-          <el-tag :type="status.configured ? 'primary' : 'info'" size="large">
-            {{ status.configured ? '已启用' : '未启用' }}
-          </el-tag>
-        </div>
-        <div class="stat-sub">{{ panelStatus }}</div>
+        <div class="stat-label">节点总数</div>
+        <div class="stat-value">{{ status.total || 0 }}</div>
+        <div class="stat-sub">运行中 {{ status.running || 0 }} 个</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">在线用户</div>
         <div class="stat-value">{{ onlineCount }}</div>
         <div class="stat-sub">近 10 分钟活跃</div>
       </div>
-    </div>
-
-    <!-- 操作 -->
-    <div class="card">
-      <div class="card-title"><el-icon><VideoPlay /></el-icon>节点控制</div>
-      <el-space>
-        <el-button type="success" :loading="acting" @click="act('start')">启动节点</el-button>
-        <el-button type="danger" :loading="acting" @click="act('stop')">停止节点</el-button>
-        <el-button type="warning" :loading="acting" @click="act('restart')">重启节点</el-button>
-        <el-button :loading="acting" @click="act('sync')">同步面板并重启</el-button>
-      </el-space>
-      <div v-if="status.panel && status.panel.lastError" class="panel-err">
-        <el-alert type="error" :closable="false" :title="'面板同步错误：' + status.panel.lastError" style="margin-top:12px" />
+      <div class="stat-card">
+        <div class="stat-label">总流量</div>
+        <div class="stat-value">{{ fmtBytes(totalTraffic) }}</div>
+        <div class="stat-sub">所有节点累计</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">面板对接</div>
+        <div class="stat-value">{{ panelOkCount }}/{{ status.total || 0 }}</div>
+        <div class="stat-sub">同步正常节点数</div>
       </div>
     </div>
 
-    <!-- 用户流量表 -->
+    <!-- 节点状态 -->
+    <div class="card">
+      <div class="card-title"><el-icon><Connection /></el-icon>节点状态</div>
+      <div v-for="n in status.nodes || []" :key="n.id" class="node-row">
+        <div class="node-info">
+          <el-tag :type="n.enabled ? (n.xray.running ? 'success' : 'warning') : 'info'" size="small">
+            {{ n.enabled ? (n.xray.running ? '运行中' : '已停止') : '已禁用' }}
+          </el-tag>
+          <b>{{ n.name }}</b>
+          <span class="node-meta">{{ n.id }}</span>
+        </div>
+        <div class="node-vers">
+          <span class="v-item">xray: <b>{{ n.xray.running ? '●' : '○' }}</b> {{ shortVer(n.xray.version) }}</span>
+          <span class="v-item">hysteria2: <b>{{ n.hy2.running ? '●' : '○' }}</b> {{ shortVer(n.hy2.version) }}</span>
+        </div>
+        <div class="node-panel" :class="n.panel.lastError ? 'err' : ''">
+          {{ n.panel.lastError ? '⚠ ' + n.panel.lastError : '面板同步正常' }}
+        </div>
+        <div class="node-ops">
+          <el-button size="small" type="success" @click="act('restart', n.id)">重启</el-button>
+          <el-button size="small" @click="$router.push('/nodes/' + n.id)">配置</el-button>
+        </div>
+      </div>
+      <el-empty v-if="!(status.nodes || []).length" description="暂无节点，请到「节点管理」新增" />
+    </div>
+
+    <!-- 用户流量 -->
     <div class="card">
       <div class="card-title"><el-icon><User /></el-icon>用户流量（累计）</div>
-      <el-table :data="users" size="small" v-loading="loadingUsers" empty-text="暂无流量数据（面板对接后自动统计）">
-        <el-table-column prop="uid" label="用户 ID" width="120" />
-        <el-table-column label="累计流量" width="160">
+      <el-table :data="users" size="small" v-loading="loadingUsers" empty-text="暂无流量数据">
+        <el-table-column prop="node_name" label="节点" width="120" />
+        <el-table-column prop="uid" label="用户 ID" width="100" />
+        <el-table-column label="累计流量" width="150">
           <template #default="{ row }"><b>{{ fmtBytes(row.traffic) }}</b></template>
         </el-table-column>
         <el-table-column label="在线 IP">
           <template #default="{ row }">
-            <el-tag v-for="ip in row.ips" :key="ip" size="small" style="margin-right:4px">{{ ip }}</el-tag>
+            <el-tag v-for="ip in (row.ips || [])" :key="ip" size="small" style="margin-right:4px">{{ ip }}</el-tag>
             <span v-if="!row.ips || !row.ips.length" class="offline">离线</span>
           </template>
         </el-table-column>
@@ -68,22 +73,22 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { VideoPlay, User } from '@element-plus/icons-vue'
+import { Connection, User } from '@element-plus/icons-vue'
 import { api, fmtBytes } from '../api'
 
 const status = ref({})
 const users = ref([])
-const acting = ref(false)
 const loadingUsers = ref(false)
 let timer = null
 
-const panelStatus = computed(() => {
-  const p = status.value.panel
-  if (!p) return ''
-  if (!status.value.configured) return '本地模式'
-  return `上次同步 ${p.lastSync}${p.lastError ? '（有错误）' : ''}`
-})
 const onlineCount = computed(() => users.value.filter(u => u.ips && u.ips.length).length)
+const totalTraffic = computed(() => users.value.reduce((s, u) => s + (u.traffic || 0), 0))
+const panelOkCount = computed(() => (status.value.nodes || []).filter(n => n.panel.running && !n.panel.lastError).length)
+
+function shortVer(v) {
+  if (!v || v === '未知') return v || '未知'
+  return v.split(' ')[0] || v
+}
 
 async function refresh() {
   try {
@@ -93,17 +98,12 @@ async function refresh() {
   } catch (e) {}
 }
 
-async function act(action) {
-  acting.value = true
+async function act(action, id) {
   try {
-    const res = await api.post('/api/action', { action })
-    ElMessage.success(res.message || '操作成功')
-    setTimeout(refresh, 1500)
-  } catch (e) {
-    ElMessage.error(e.message)
-  } finally {
-    acting.value = false
-  }
+    await api.post('/api/action', { action, node_id: id })
+    ElMessage.success('操作成功')
+    setTimeout(refresh, 2000)
+  } catch (e) { ElMessage.error(e.message) }
 }
 
 onMounted(() => { refresh(); timer = setInterval(refresh, 10000) })
@@ -114,9 +114,16 @@ onUnmounted(() => clearInterval(timer))
 .stat-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 16px; }
 .stat-card { background: #fff; border-radius: 8px; padding: 20px; box-shadow: 0 1px 4px rgba(0,0,0,.06); }
 .stat-label { color: #909399; font-size: 13px; margin-bottom: 10px; }
-.stat-value { font-size: 22px; font-weight: 600; }
-.stat-value.version { font-size: 16px; word-break: break-all; }
+.stat-value { font-size: 24px; font-weight: 600; }
 .stat-sub { color: #c0c4cc; font-size: 12px; margin-top: 8px; }
+.node-row { display: flex; align-items: center; gap: 16px; padding: 12px 0; border-bottom: 1px solid #f0f2f5; flex-wrap: wrap; }
+.node-row:last-child { border-bottom: none; }
+.node-info { display: flex; align-items: center; gap: 8px; min-width: 180px; }
+.node-meta { color: #c0c4cc; font-size: 12px; }
+.node-vers { display: flex; gap: 16px; font-size: 13px; color: #606266; }
+.v-item b { color: #67c23a; }
+.node-panel { font-size: 12px; color: #909399; flex: 1; min-width: 150px; }
+.node-panel.err { color: #f56c6c; }
 .offline { color: #c0c4cc; font-size: 12px; }
 @media (max-width: 900px) { .stat-row { grid-template-columns: repeat(2, 1fr); } }
 </style>
