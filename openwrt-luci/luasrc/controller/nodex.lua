@@ -100,6 +100,13 @@ STOP=10
 USE_PROCD=1
 PROG=/usr/bin/nodex
 CONFIG=/etc/nodex/config.json
+NODEX_TZ=$(uci get system.@system[0].timezone 2>/dev/null)
+case "$NODEX_TZ" in
+    CST-8) NODEX_TZ="Asia/Shanghai" ;;
+    CST-7) NODEX_TZ="Asia/Hong_Kong" ;;
+    UTC)   NODEX_TZ="UTC" ;;
+esac
+[ -z "$NODEX_TZ" ] && NODEX_TZ="Asia/Shanghai"
 start_service() {
     procd_open_instance
     procd_set_param command "$PROG" start
@@ -107,6 +114,7 @@ start_service() {
     procd_set_param stdout 1
     procd_set_param stderr 1
     procd_set_param pidfile /var/run/nodex.pid
+    procd_set_param env TZ="$NODEX_TZ"
     procd_close_instance
 }
 stop_service() {

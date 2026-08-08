@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"time"
+	_ "time/tzdata" // 内置时区数据库（OpenWrt 无 zoneinfo 也能解析 Asia/Shanghai）
 
 	"github.com/wooxi/nodex/internal/config"
 	"github.com/wooxi/nodex/internal/manager"
