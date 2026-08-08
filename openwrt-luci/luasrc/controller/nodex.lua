@@ -5,8 +5,12 @@ local api_base = "http://127.0.0.1:8888"
 function index()
     entry({"admin", "services", "nodex"}, alias("admin", "services", "nodex", "index"), _("NodeX"), 80).dependent = false
     entry({"admin", "services", "nodex", "index"}, template("nodex/index"), _("NodeX"), 10)
-    entry({"admin", "services", "nodex", "api"}, call("api_proxy"), _("API"), 100).leaf = true
-    entry({"admin", "services", "nodex", "backend"}, call("backend_ctl"), _("后端管理"), 90).leaf = true
+    local api_e = entry({"admin", "services", "nodex", "api"}, call("api_proxy"), _("API"), 100)
+    api_e.leaf = true
+    api_e.hidden = true
+    local be_e = entry({"admin", "services", "nodex", "backend"}, call("backend_ctl"), _("后端管理"), 90)
+    be_e.leaf = true
+    be_e.hidden = true
 end
 
 -- 后端管理：action = status | install | restart

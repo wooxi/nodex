@@ -8,7 +8,7 @@
         opts = opts || {};
         var init = { method: opts.method || 'GET', headers: { 'Accept': 'application/json' } };
         if (opts.body) {
-            init.method = 'POST';
+            init.method = opts.method || 'POST';
             init.headers['Content-Type'] = 'application/json';
             init.body = JSON.stringify(opts.body);
         }
