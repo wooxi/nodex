@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"net"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -58,18 +59,19 @@ func (m *Manager) UpdateConfig(node *config.Node, global *config.Config) {
 	m.global = global
 }
 
-// IsRunning 检查 xray 进程是否存活
+// IsRunning 检查 xray 进程是否存活（pid 文件 + 端口双重检测）
 func (m *Manager) IsRunning() bool {
-	if m.cmd == nil || m.cmd.Process == nil {
-		// 检查 pid 文件，支持外部启动的 xray
-		if pid := m.readPID(); pid > 0 {
-			if err := syscall.Kill(pid, 0); err == nil {
-				return true
-			}
-		}
-		return false
+	if m.cmd != nil && m.cmd.Process != nil && (m.cmd.ProcessState == nil || !m.cmd.ProcessState.Exited()) {
+		return true
 	}
-	return m.cmd.ProcessState == nil || !m.cmd.ProcessState.Exited()
+	pid := m.readPID()
+	if pid > 0 {
+		if err := syscall.Kill(pid, 0); err == nil {
+			// 端口检测：确认是 xray 在监听（容器重启后 pid 可能被复用）
+			return portListening(m.apiPort)
+		}
+	}
+	return false
 }
 
 func (m *Manager) configPath() string { return filepath.Join(m.dir, "xray", "config.json") }
@@ -95,6 +97,16 @@ func (m *Manager) Pid() int {
 		return m.cmd.Process.Pid
 	}
 	return m.readPID()
+}
+
+// portListening 检查本地端口是否有监听（进程存活佐证）
+func portListening(port int) bool {
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 200*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
 }
 
 func (m *Manager) writePID(pid int) {
@@ -265,7 +277,7 @@ func (m *Manager) BuildConfig() ([]byte, error) {
 	}
 
 	inbounds := []any{}
-	if m.cfg.Panel.Enabled && len(users) > 0 {
+	if m.global.Panel.Enabled && len(users) > 0 {
 		inbounds = append(inbounds, m.buildPanelInbound(users)...)
 	} else {
 		inbounds = append(inbounds, m.buildLocalInbound()...)
@@ -319,7 +331,7 @@ func (m *Manager) buildPanelInbound(users []User) []any {
 	}
 
 	node := config.NodeConfig{
-		Protocol:   m.cfg.Panel.NodeType,
+		Protocol:   m.global.Panel.NodeType,
 		Port:       port,
 		UUID:       "",
 		TLS:        tlsMode,

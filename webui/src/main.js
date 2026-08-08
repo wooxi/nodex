@@ -8,6 +8,7 @@ import Login from './views/Login.vue'
 import Dashboard from './views/Dashboard.vue'
 import Nodes from './views/Nodes.vue'
 import NodeEdit from './views/NodeEdit.vue'
+import PanelConfig from './views/PanelConfig.vue'
 import SystemConfig from './views/SystemConfig.vue'
 import Logs from './views/Logs.vue'
 
@@ -18,6 +19,7 @@ const router = createRouter({
     { path: '/', component: Dashboard },
     { path: '/nodes', component: Nodes },
     { path: '/nodes/:id', component: NodeEdit },
+    { path: '/panel', component: PanelConfig },
     { path: '/system', component: SystemConfig },
     { path: '/logs', component: Logs }
   ]

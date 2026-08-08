@@ -50,7 +50,7 @@ func NewSyncer(node *config.Node, global *config.Config, nodeDir string, xm *xra
 		node:      node,
 		global:    global,
 		nodeDir:   nodeDir,
-		panel:     NewClient(&node.Panel),
+		panel:     NewClient(&global.Panel),
 		xm:        xm,
 		hy2:       hy2,
 		stats:     stats,
@@ -64,7 +64,7 @@ func (s *Syncer) UpdateConfig(node *config.Node, global *config.Config) {
 	defer s.mu.Unlock()
 	s.node = node
 	s.global = global
-	s.panel = NewClient(&node.Panel)
+	s.panel = NewClient(&global.Panel)
 	s.accessLog.UpdateConfig(nodeDirOf(node, global))
 	s.xm.UpdateConfig(node, global)
 	s.hy2.UpdateConfig(node, global)
@@ -88,7 +88,16 @@ func (s *Syncer) Start() {
 
 	go func() {
 		log.Println("[nodex] 同步器已启动")
-		// 启动即立即同步一次
+		// 等待 xray stats API 就绪后首次同步（最多 8 秒）
+		for i := 0; i < 4; i++ {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_, err := s.stats.GetTraffic(ctx)
+			cancel()
+			if err == nil {
+				break
+			}
+			time.Sleep(2 * time.Second)
+		}
 		s.syncOnce()
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
@@ -132,7 +141,7 @@ func (s *Syncer) syncOnce() {
 	global := s.global
 	s.mu.Unlock()
 
-	if !node.Panel.Enabled {
+	if !global.Panel.Enabled {
 		return
 	}
 
@@ -179,8 +188,8 @@ func (s *Syncer) syncOnce() {
 	}
 
 	// 3. 若面板指定了协议且本地未显式覆盖，采用面板协议
-	if remote.Protocol != "" && node.Panel.NodeType == "" {
-		node.Panel.NodeType = remote.Protocol
+	if remote.Protocol != "" && global.Panel.NodeType == "" {
+		global.Panel.NodeType = remote.Protocol
 		s.xm.UpdateConfig(node, global)
 	}
 

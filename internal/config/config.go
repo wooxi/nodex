@@ -11,6 +11,7 @@ import (
 // 多节点架构：system/web 为全局配置，nodes 为节点列表（每个节点独立面板对接与协议配置）。
 type Config struct {
 	Web    WebConfig    `json:"web"`
+	Panel  PanelConfig  `json:"panel"` // 全局面板对接（一个部署只对接一个面板）
 	System SystemConfig `json:"system"`
 	Nodes  []*Node      `json:"nodes"`
 }
@@ -31,13 +32,12 @@ type SystemConfig struct {
 	Hy2APIPortBase int   `json:"hy2_api_port_base"` // hysteria traffic API 起始端口
 }
 
-// Node 单个节点配置
+// Node 单个节点配置（协议相关；面板对接为全局配置）
 type Node struct {
-	ID      string      `json:"id"`      // 唯一标识（如 n1）
-	Name    string      `json:"name"`    // 显示名称
-	Enabled bool        `json:"enabled"` // 是否启用
-	Panel   PanelConfig `json:"panel"`   // 面板对接
-	Node    NodeConfig  `json:"node"`    // 协议配置
+	ID      string     `json:"id"`      // 唯一标识（如 n1）
+	Name    string     `json:"name"`    // 显示名称
+	Enabled bool       `json:"enabled"` // 是否启用
+	Node    NodeConfig `json:"node"`    // 协议配置
 }
 
 type PanelConfig struct {
@@ -91,6 +91,10 @@ const DefaultConfigPath = "/etc/nodex/config.json"
 func Default() *Config {
 	return &Config{
 		Web: WebConfig{Port: 8888},
+		Panel: PanelConfig{
+			PullInterval: 60,
+			PushInterval: 60,
+		},
 		System: SystemConfig{
 			XrayPath:       "/usr/bin/xray",
 			HysteriaPath:   "/usr/bin/hysteria",
@@ -109,10 +113,6 @@ func DefaultNode() *Node {
 		ID:      newID(),
 		Name:    "新节点",
 		Enabled: true,
-		Panel: PanelConfig{
-			PullInterval: 60,
-			PushInterval: 60,
-		},
 		Node: NodeConfig{
 			Protocol: "vless",
 			Port:     8686,
@@ -156,7 +156,26 @@ func Load(path string) (*Config, error) {
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return nil, err
 	}
-	// 兼容旧版单节点配置：迁移到 nodes[0]
+	// 兼容 v0.2 多节点版：node.Panel 提升为全局
+	type legacyNode struct {
+		ID      string      `json:"id"`
+		Name    string      `json:"name"`
+		Enabled bool        `json:"enabled"`
+		Panel   PanelConfig `json:"panel"`
+		Node    NodeConfig  `json:"node"`
+	}
+	var legacyNodes struct {
+		Panel PanelConfig   `json:"panel"`
+		Nodes []legacyNode  `json:"nodes"`
+	}
+	if err := json.Unmarshal(data, &legacyNodes); err == nil && len(legacyNodes.Nodes) > 0 {
+		if cfg.Panel.URL == "" && legacyNodes.Panel.URL != "" {
+			cfg.Panel = legacyNodes.Panel
+		} else if cfg.Panel.URL == "" && legacyNodes.Nodes[0].Panel.URL != "" {
+			cfg.Panel = legacyNodes.Nodes[0].Panel
+		}
+	}
+	// 兼容旧版单节点配置：迁移到 nodes[0] + 全局 panel
 	if len(cfg.Nodes) == 0 {
 		var legacy struct {
 			Web    WebConfig    `json:"web"`
@@ -168,6 +187,7 @@ func Load(path string) (*Config, error) {
 			if legacy.Panel.URL != "" || legacy.Node.Port != 0 || legacy.Node.Protocol != "" {
 				cfg.Web = legacy.Web
 				cfg.System = legacy.System
+				cfg.Panel = legacy.Panel
 				// 兼容旧字段：hysteria 二进制路径在 Hy2.BinPath
 				if cfg.System.HysteriaPath == "" {
 					cfg.System.HysteriaPath = legacy.Node.Hy2.BinPath
@@ -189,7 +209,6 @@ func Load(path string) (*Config, error) {
 				n := DefaultNode()
 				n.ID = "n1"
 				n.Name = "节点1"
-				n.Panel = legacy.Panel
 				n.Node = legacy.Node
 				cfg.Nodes = []*Node{n}
 			}
@@ -216,6 +235,17 @@ func (c *Config) Validate() error {
 	if c.Web.Port < 1 || c.Web.Port > 65535 {
 		return errors.New("Web 管理端口无效")
 	}
+	if c.Panel.Enabled {
+		if c.Panel.URL == "" {
+			return errors.New("面板地址不能为空")
+		}
+		if c.Panel.Token == "" {
+			return errors.New("通信密钥不能为空")
+		}
+		if c.Panel.NodeID <= 0 {
+			return errors.New("节点 ID 必须大于 0")
+		}
+	}
 	if len(c.Nodes) == 0 {
 		return errors.New("至少需要配置一个节点")
 	}
@@ -228,17 +258,6 @@ func (c *Config) Validate() error {
 			return errors.New("节点 ID 重复: " + n.ID)
 		}
 		seen[n.ID] = true
-		if n.Panel.Enabled {
-			if n.Panel.URL == "" {
-				return errors.New("节点 [" + n.Name + "] 面板地址不能为空")
-			}
-			if n.Panel.Token == "" {
-				return errors.New("节点 [" + n.Name + "] 通信密钥不能为空")
-			}
-			if n.Panel.NodeID <= 0 {
-				return errors.New("节点 [" + n.Name + "] 节点 ID 必须大于 0")
-			}
-		}
 		switch n.Node.Protocol {
 		case "vless", "vmess", "trojan", "shadowsocks", "hysteria2":
 		default:
@@ -263,11 +282,11 @@ func (c *Config) EnsureDefaults() {
 		if n.Node.Hy2.ObfsPassword == "" && n.Node.Hy2.Obfs == "salamander" {
 			n.Node.Hy2.ObfsPassword = randHex(8)
 		}
-		if n.Panel.PullInterval == 0 {
-			n.Panel.PullInterval = 60
-		}
-		if n.Panel.PushInterval == 0 {
-			n.Panel.PushInterval = 60
-		}
+	}
+	if c.Panel.PullInterval == 0 {
+		c.Panel.PullInterval = 60
+	}
+	if c.Panel.PushInterval == 0 {
+		c.Panel.PushInterval = 60
 	}
 }

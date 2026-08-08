@@ -99,8 +99,8 @@ func (m *Manager) StartAll() {
 func (m *Manager) startOne(rt *Runtime) {
 	// 注入认证信息
 	rt.Hy2.SetAuth(fmt.Sprintf("http://127.0.0.1:%d/api/hy2-auth?node=%s", m.global.Web.Port, rt.Cfg.ID), rt.Syncer.Hy2Secret())
-	// 本地模式注入本地用户
-	if !rt.Cfg.Panel.Enabled && rt.Cfg.Node.UUID != "" {
+	// 本地模式（面板未启用）注入本地用户
+	if !m.global.Panel.Enabled && rt.Cfg.Node.UUID != "" {
 		rt.Xray.SetUsers([]xray.User{{ID: 1, UUID: rt.Cfg.Node.UUID}})
 		rt.Hy2.SetUsers([]xray.User{{ID: 1, UUID: rt.Cfg.Node.UUID}})
 	}

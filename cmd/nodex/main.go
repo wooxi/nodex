@@ -61,6 +61,10 @@ func main() {
 	}
 
 	_ = context.Background()
+
+	// 服务模式：自动启动所有启用节点（容器重启 / 开机自启后节点自动恢复）
+	mgr.StartAll()
+
 	srv := web.New(cfg, *cfgPath, mgr)
 	addr := fmt.Sprintf("0.0.0.0:%d", cfg.Web.Port)
 	log.Printf("[nodex] NodeX v%s Web 管理界面: http://%s", version, addr)

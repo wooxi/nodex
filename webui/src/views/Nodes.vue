@@ -85,7 +85,6 @@ async function addNode() {
       id: 'n' + Math.random().toString(16).slice(2, 6),
       name: '新节点' + (cfg.nodes.length + 1),
       enabled: true,
-      panel: { enabled: false, url: '', token: '', node_id: 0, node_type: '', pull_interval: 60, push_interval: 60 },
       node: {
         protocol: 'vless', port: 8686, uuid: '', tls: 0, cert_path: '', key_path: '', server_name: '',
         reality: { dest: 'www.amazon.com:443', server_names: 'www.amazon.com', private_key: '', public_key: '', short_ids: '' },

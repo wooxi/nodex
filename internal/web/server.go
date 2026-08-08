@@ -282,7 +282,7 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request) {
 // startOne 启动单节点（含认证信息注入）
 func (s *Server) startOne(rt *manager.Runtime) {
 	rt.Hy2.SetAuth(fmt.Sprintf("http://127.0.0.1:%d/api/hy2-auth?node=%s", s.cfg.Web.Port, rt.Cfg.ID), rt.Syncer.Hy2Secret())
-	if !rt.Cfg.Panel.Enabled && rt.Cfg.Node.UUID != "" {
+	if !s.cfg.Panel.Enabled && rt.Cfg.Node.UUID != "" {
 		rt.Xray.SetUsers([]xray.User{{ID: 1, UUID: rt.Cfg.Node.UUID}})
 		rt.Hy2.SetUsers([]xray.User{{ID: 1, UUID: rt.Cfg.Node.UUID}})
 	}
