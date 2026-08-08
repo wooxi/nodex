@@ -46,8 +46,8 @@
 |---|---|---|
 | 主程序语言 | **Go**（静态编译，CGO 关闭） | 单二进制、交叉编译简单、OpenWrt x86_64 直接跑 |
 | 前端 | **Vue3 + Vite**，`go:embed` 嵌入二进制 | 无外部依赖，一个文件搞定 |
-| 内核 | **Xray 单内核**（hysteria2 用 xray 1.8+ 原生 inbound） | 只管理一个进程，hysteria2 也能走 xray 的 stats API 统计流量 |
-| 面板协议 | **V2Board 标准对接协议**（与 XrayR 兼容） | Xboard/V2Board 通用 |
+| 内核 | **双内核**：xray + 官方 hysteria2 二进制 | xray release 不含 hysteria2 模块；hysteria2 用 auth.http 回调实现 per-user 统计 |
+| 面板协议 | **Xboard UniProxy 协议**（push 格式 `{uid: [up, down]}`） | 与 Xboard 源码逐字段核对 |
 | 配置存储 | `/etc/nodex/config.json`（UI 表单生成，用户不手写） | 表单→结构化配置 |
 | 打包 | **ipk**（opkg） + `/etc/init.d/nodex` | 原生安装方式，开机自启 |
 | CI | **GitHub Actions** + OpenWrt SDK | 自动编译 ipk 并发布 Release |
