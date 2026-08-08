@@ -35,6 +35,7 @@ type Syncer struct {
 	accessLog *AccessLog
 
 	hy2Last map[int64]xray.Traffic // hysteria2 流量快照
+	hy2Port int                    // hysteria2 面板端口（指纹计算用）
 
 	lastFingerprint string // 最近应用的配置指纹
 
@@ -192,15 +193,30 @@ func (s *Syncer) syncOnce() {
 		node.NodeType = remote.Protocol
 		s.xm.UpdateConfig(node, global)
 	}
+	// hysteria 节点：hy2 端口跟随面板
+	if (remote.Protocol == "hysteria" || remote.Protocol == "hysteria2") && remote.ServerPort > 0 {
+		s.hy2.SetRemotePort(remote.ServerPort)
+		s.hy2Port = remote.ServerPort
+	} else {
+		s.hy2.SetRemotePort(0)
+		s.hy2Port = 0
+	}
 
-	// 3.5 配置指纹变化时重启 xray（使 remote/users 生效）
-	fingerprint := fmt.Sprintf("%s|%d|%s|%d|%v",
-		remoteCfg.Protocol, remoteCfg.Port, remoteCfg.Network, remoteCfg.TLS, users)
+	// 3.5 配置指纹变化时重启 xray + hy2（使 remote/users 生效）
+	fingerprint := fmt.Sprintf("%s|%d|%s|%d|%v|%d",
+		remoteCfg.Protocol, remoteCfg.Port, remoteCfg.Network, remoteCfg.TLS, users, s.hy2Port)
 	if fingerprint != s.lastFingerprint {
 		s.lastFingerprint = fingerprint
 		if err := s.xm.Restart(); err != nil {
 			s.setErr("重启 xray 应用配置失败: " + err.Error())
 			return
+		}
+		if s.hy2.IsRunning() {
+			s.hy2.Stop()
+			if err := s.hy2.Start(); err != nil {
+				s.setErr("重启 hysteria2 失败: " + err.Error())
+				return
+			}
 		}
 		s.stats.Reset()
 		s.ResetHy2()

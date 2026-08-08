@@ -316,7 +316,7 @@ func (m *Manager) buildPanelInbound(users []User) []any {
 	cfg := m.cfg.Node
 	var inbounds []any
 
-	// 面板模式：端口/网络/TLS 以面板返回为准（本地 Reality 参数作为补充）
+	// 面板模式：端口以面板返回为准（自动同步），网络/TLS 以面板返回为准
 	port := cfg.Port
 	tlsMode := cfg.TLS
 	network := "tcp"

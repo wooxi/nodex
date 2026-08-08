@@ -231,6 +231,7 @@
         var el = document.getElementById('nodex-content');
         el.innerHTML = '<div style="color:#999">加载中...</div>';
         api('/config').then(function (cfg) {
+            window.nodexGlobalPanel = cfg.panel || {};
             var node = (cfg.nodes || []).filter(function (n) { return n.id === id; })[0];
             if (!node) { el.innerHTML = '<div class="nodex-err">节点不存在</div>'; return; }
             window.nodexEditNode = node;
@@ -263,8 +264,13 @@
                 return '<div class="nodex-field"><label>' + esc(label) + '</label>' + input + ' ' + btn + '</div>';
             }
 
+            var panelEnabled = window.nodexGlobalPanel && window.nodexGlobalPanel.enabled;
             if (proto !== 'hysteria2') {
-                fields += f('监听端口', 'node.port', 'number', node.node.port);
+                if (panelEnabled) {
+                    fields += '<div class="nodex-field"><label>监听端口</label><span class="nodex-tag nodex-tag-ok">自动同步面板</span> <span style="color:#999;font-size:12px">由面板节点配置决定</span></div>';
+                } else {
+                    fields += f('监听端口', 'node.port', 'number', node.node.port);
+                }
                 if (proto === 'vless' || proto === 'vmess') fields += f('UUID', 'node.uuid', 'text', node.node.uuid, 'uuid');
                 if (proto === 'vless') {
                     fields += f('TLS 类型', 'node.tls', 'select', node.node.tls, null, [
@@ -322,7 +328,7 @@
                 '<div class="nodex-field"><label>面板节点 ID</label>' + nodeIdInput + '</div>' +
                 '<div class="nodex-field"><label>节点类型</label>' + nodeTypeSel + '</div>' +
                 '<div class="nodex-field"><label></label><button class="nodex-btn" onclick="window.nodexTestNodePanel(\'' + id + '\')">测试面板连接</button></div>' +
-                '<div style="color:#999;font-size:12px;margin-top:4px">提示：面板模式下监听端口以面板节点配置为准</div></div>' +
+                '<div style="color:#999;font-size:12px;margin-top:4px">提示：监听端口自动同步面板节点配置，无需手动设置</div></div>' +
                 '<div class="nodex-card"><h3>协议</h3><div>' + protoBtns + '</div></div>' +
                 '<div class="nodex-card"><h3>协议配置</h3>' + fields +
                 '<div style="margin-top:12px">' +

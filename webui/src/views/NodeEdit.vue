@@ -57,9 +57,12 @@
         <!-- ========== Xray 系协议（vless/vmess/trojan/shadowsocks） ========== -->
         <template v-if="form.node.protocol !== 'hysteria2'">
           <el-divider content-position="left">{{ protoLabel }} 入站</el-divider>
-          <el-form-item label="监听端口" required>
+          <el-form-item v-if="panelEnabled" label="监听端口">
+            <el-tag type="success" size="small">自动同步面板</el-tag>
+            <span class="tip">由面板节点配置决定，无需手动设置</span>
+          </el-form-item>
+          <el-form-item v-else label="监听端口" required>
             <el-input-number v-model="form.node.port" :min="1" :max="65535" />
-            <span class="tip">面板模式下以面板端口为准</span>
           </el-form-item>
           <el-form-item v-if="['vless','vmess'].includes(form.node.protocol)" label="UUID" required>
             <el-input v-model="form.node.uuid" style="width:360px" placeholder="本地模式测试用户">
@@ -187,6 +190,7 @@ const protoLabel = computed(() => {
 const form = ref(null)
 const saving = ref(false)
 const testing = ref(false)
+const panelEnabled = ref(false)
 
 async function testPanel() {
   testing.value = true
@@ -205,6 +209,7 @@ async function testPanel() {
 onMounted(async () => {
   try {
     const cfg = await api.get('/api/config')
+    panelEnabled.value = !!cfg.panel.enabled
     const n = cfg.nodes.find(x => x.id === route.params.id)
     if (!n) { ElMessage.error('节点不存在'); return }
     form.value = reactive(JSON.parse(JSON.stringify(n)))

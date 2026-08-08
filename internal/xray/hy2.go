@@ -21,15 +21,19 @@ import (
 // 认证采用 auth.http 模式回调 NodeX，实现 per-user 流量统计：
 //   客户端 auth = 用户 uuid → NodeX 认证 API 返回 {ok, id: uid} → /traffic 按 uid 统计
 type Hy2Manager struct {
-	cfg      *config.Node // 节点配置
-	global   *config.Config
-	dir      string // 节点数据目录
-	apiPort  int    // traffic API 端口
-	authURL  string // 认证回调地址
-	secret   string // traffic API 密钥
-	cmd      *exec.Cmd
-	users    []User // uid -> uuid 映射
+	cfg        *config.Node // 节点配置
+	global     *config.Config
+	dir        string // 节点数据目录
+	apiPort    int    // traffic API 端口
+	authURL    string // 认证回调地址
+	secret     string // traffic API 密钥
+	remotePort int    // 面板返回的端口（面板优先）
+	cmd        *exec.Cmd
+	users      []User // uid -> uuid 映射
 }
+
+// SetRemotePort 设置面板端口（hysteria 节点时 hy2 端口跟随面板）
+func (m *Hy2Manager) SetRemotePort(p int) { m.remotePort = p }
 
 func NewHy2Manager(node *config.Node, global *config.Config, dir string, apiPort int) *Hy2Manager {
 	return &Hy2Manager{cfg: node, global: global, dir: dir, apiPort: apiPort}
@@ -89,13 +93,17 @@ func (m *Hy2Manager) Pid() int {
 // BuildConfig 生成 hysteria2 服务器配置（YAML）
 func (m *Hy2Manager) BuildConfig(authURL, trafficSecret string) (string, error) {
 	cfg := m.cfg.Node.Hy2
+	port := cfg.Port
+	if m.remotePort > 0 {
+		port = m.remotePort // 面板端口优先
+	}
 	cert, key := cfg.CertPath, cfg.KeyPath
 	if cert == "" {
 		cert = m.global.System.CertPath
 		key = m.global.System.KeyPath
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "listen: 0.0.0.0:%d\n", cfg.Port)
+	fmt.Fprintf(&b, "listen: 0.0.0.0:%d\n", port)
 	fmt.Fprintf(&b, "tls:\n  cert: %s\n  key: %s\n", cert, key)
 	if cfg.IgnoreBW {
 		b.WriteString("ignoreClientBandwidth: true\n")
