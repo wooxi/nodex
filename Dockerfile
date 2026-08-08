@@ -20,7 +20,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags "-s -w" -o nodex ./cmd/nodex
 
 # 阶段3: 运行镜像
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates openssl curl \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates openssl curl unzip \
     && rm -rf /var/lib/apt/lists/*
 
 # xray / hysteria 内核（与 OpenWrt 部署同版本）
