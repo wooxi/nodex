@@ -57,11 +57,7 @@
         <!-- ========== Xray 系协议（vless/vmess/trojan/shadowsocks） ========== -->
         <template v-if="form.node.protocol !== 'hysteria2'">
           <el-divider content-position="left">{{ protoLabel }} 入站</el-divider>
-          <el-form-item v-if="panelEnabled" label="监听端口">
-            <el-tag type="success" size="small">自动同步面板</el-tag>
-            <span class="tip">由面板节点配置决定，无需手动设置</span>
-          </el-form-item>
-          <el-form-item v-else label="监听端口" required>
+          <el-form-item v-if="!panelEnabled" label="监听端口" required>
             <el-input-number v-model="form.node.port" :min="1" :max="65535" />
           </el-form-item>
           <el-form-item v-if="['vless','vmess'].includes(form.node.protocol)" label="UUID" required>
@@ -104,6 +100,29 @@
             </template>
           </template>
 
+          <!-- VMess: TLS -->
+          <template v-if="form.node.protocol === 'vmess'">
+            <el-form-item label="TLS 类型">
+              <el-radio-group v-model="form.node.tls">
+                <el-radio :value="0">关闭</el-radio>
+                <el-radio :value="1">TLS（证书）</el-radio>
+              </el-radio-group>
+            </el-form-item>
+            <template v-if="form.node.tls === 1">
+              <el-form-item label="证书路径"><el-input v-model="form.node.cert_path" placeholder="/etc/nodex/cert.pem" /></el-form-item>
+              <el-form-item label="私钥路径"><el-input v-model="form.node.key_path" placeholder="/etc/nodex/key.pem" /></el-form-item>
+              <el-form-item label="SNI (serverName)"><el-input v-model="form.node.server_name" /></el-form-item>
+            </template>
+          </template>
+
+          <!-- Trojan: 必须 TLS -->
+          <template v-if="form.node.protocol === 'trojan'">
+            <el-alert type="info" :closable="false" style="margin-bottom:16px" title="Trojan 需启用 TLS，用户密码由面板 UUID 自动生成" />
+            <el-form-item label="证书路径"><el-input v-model="form.node.cert_path" placeholder="/etc/nodex/cert.pem" /></el-form-item>
+            <el-form-item label="私钥路径"><el-input v-model="form.node.key_path" placeholder="/etc/nodex/key.pem" /></el-form-item>
+            <el-form-item label="SNI (serverName)"><el-input v-model="form.node.server_name" /></el-form-item>
+          </template>
+
           <!-- Shadowsocks -->
           <template v-if="form.node.protocol === 'shadowsocks'">
             <el-form-item label="加密方式">
@@ -116,15 +135,12 @@
             </el-form-item>
           </template>
 
-          <!-- trojan/vmess 提示 -->
-          <el-alert v-if="['trojan','vmess'].includes(form.node.protocol)" type="info" :closable="false" style="margin:0 0 16px 140px;max-width:480px"
-            :title="form.node.protocol === 'trojan' ? 'Trojan 用户密码由面板 UUID 自动生成' : 'VMess 用户由面板 UUID 自动生成'" />
         </template>
 
         <!-- ========== Hysteria2 ========== -->
         <template v-else>
           <el-divider content-position="left">Hysteria2 入站</el-divider>
-          <el-form-item label="监听端口" required>
+          <el-form-item v-if="!panelEnabled" label="监听端口" required>
             <el-input-number v-model="form.node.hy2.port" :min="1" :max="65535" />
             <span class="tip">UDP 端口</span>
           </el-form-item>

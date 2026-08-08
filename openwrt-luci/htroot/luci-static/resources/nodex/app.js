@@ -266,9 +266,8 @@
 
             var panelEnabled = window.nodexGlobalPanel && window.nodexGlobalPanel.enabled;
             if (proto !== 'hysteria2') {
-                if (panelEnabled) {
-                    fields += '<div class="nodex-field"><label>监听端口</label><span class="nodex-tag nodex-tag-ok">自动同步面板</span> <span style="color:#999;font-size:12px">由面板节点配置决定</span></div>';
-                } else {
+                // 面板模式下端口自动同步面板，不显示端口选项
+                if (!panelEnabled) {
                     fields += f('监听端口', 'node.port', 'number', node.node.port);
                 }
                 if (proto === 'vless' || proto === 'vmess') fields += f('UUID', 'node.uuid', 'text', node.node.uuid, 'uuid');
@@ -287,7 +286,24 @@
                     } else if (String(node.node.tls) === '1') {
                         fields += f('证书路径', 'node.cert_path', 'text', node.node.cert_path);
                         fields += f('私钥路径', 'node.key_path', 'text', node.node.key_path);
+                        fields += f('SNI (serverName)', 'node.server_name', 'text', node.node.server_name);
                     }
+                }
+                if (proto === 'vmess') {
+                    fields += f('TLS 类型', 'node.tls', 'select', node.node.tls, null, [
+                        { value: 0, label: '关闭' }, { value: 1, label: 'TLS 证书' }
+                    ]);
+                    if (String(node.node.tls) === '1') {
+                        fields += f('证书路径', 'node.cert_path', 'text', node.node.cert_path);
+                        fields += f('私钥路径', 'node.key_path', 'text', node.node.key_path);
+                        fields += f('SNI (serverName)', 'node.server_name', 'text', node.node.server_name);
+                    }
+                }
+                if (proto === 'trojan') {
+                    fields += f('证书路径', 'node.cert_path', 'text', node.node.cert_path);
+                    fields += f('私钥路径', 'node.key_path', 'text', node.node.key_path);
+                    fields += f('SNI (serverName)', 'node.server_name', 'text', node.node.server_name);
+                    fields += '<div class="nodex-field"><label></label><span style="color:#999;font-size:12px">Trojan 需启用 TLS，用户密码由面板 UUID 自动生成</span></div>';
                 }
                 if (proto === 'shadowsocks') {
                     fields += f('加密方式', 'node.ss_method', 'select', node.node.ss_method, null, [
@@ -298,7 +314,10 @@
                     ]);
                 }
             } else {
-                fields += f('监听端口', 'node.hy2.port', 'number', node.node.hy2.port);
+                // 面板模式下 hy2 端口自动同步面板，不显示端口选项
+                if (!panelEnabled) {
+                    fields += f('监听端口', 'node.hy2.port', 'number', node.node.hy2.port);
+                }
                 fields += f('认证密码', 'node.hy2.password', 'text', node.node.hy2.password, 'password');
                 fields += f('混淆 obfs', 'node.hy2.obfs', 'select', node.node.hy2.obfs, null, [
                     { value: 'none', label: '关闭' }, { value: 'salamander', label: 'salamander' }
@@ -328,7 +347,7 @@
                 '<div class="nodex-field"><label>面板节点 ID</label>' + nodeIdInput + '</div>' +
                 '<div class="nodex-field"><label>节点类型</label>' + nodeTypeSel + '</div>' +
                 '<div class="nodex-field"><label></label><button class="nodex-btn" onclick="window.nodexTestNodePanel(\'' + id + '\')">测试面板连接</button></div>' +
-                '<div style="color:#999;font-size:12px;margin-top:4px">提示：监听端口自动同步面板节点配置，无需手动设置</div></div>' +
+                '<div style="color:#999;font-size:12px;margin-top:4px">提示：面板模式下监听端口、传输网络均自动同步面板节点配置</div></div>' +
                 '<div class="nodex-card"><h3>协议</h3><div>' + protoBtns + '</div></div>' +
                 '<div class="nodex-card"><h3>协议配置</h3>' + fields +
                 '<div style="margin-top:12px">' +

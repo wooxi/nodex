@@ -1,18 +1,22 @@
 # NodeX 多阶段构建
 # 阶段1: 前端构建
 FROM node:20-alpine AS frontend
+# 国内环境可设 NPM_REGISTRY=https://registry.npmmirror.com
+ARG NPM_REGISTRY=https://registry.npmjs.org
 WORKDIR /build/webui
 COPY webui/package.json webui/package-lock.json ./
-RUN npm ci --no-audit --no-fund
+RUN npm config set registry $NPM_REGISTRY && npm ci --no-audit --no-fund
 COPY webui/ ./
 RUN npm run build
 # 产物输出到 ../internal/web/dist（vite outDir 配置）
 
 # 阶段2: Go 后端构建
 FROM golang:1.26-alpine AS backend
+# 国内环境可设 GOPROXY=https://goproxy.cn,direct
+ARG GOPROXY=https://proxy.golang.org,direct
 WORKDIR /build
 COPY go.mod go.sum ./
-RUN go mod download
+RUN GOPROXY=$GOPROXY go mod download
 COPY cmd/ ./cmd/
 COPY internal/ ./internal/
 # 前端产物供 embed（vite outDir 配置为 ../internal/web/dist）
