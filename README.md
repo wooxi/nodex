@@ -33,20 +33,26 @@
 
 ## 安装
 
+### Docker 方式（推荐）
+
 ```bash
-# 1. 安装内核（xray 1.8+，hysteria 2.x）
-opkg update
-opkg install xray hysteria   # 或手动放置二进制到 /usr/bin/
+git clone https://github.com/wooxi/nodex
+cd nodex
+cp docker-compose.yml my-compose.yml   # 按需修改端口
+docker compose -f my-compose.yml up -d
+# 管理界面: http://<IP>:8888 （首次访问设置管理密码）
+# 配置数据保存在 ./data/ 目录
+```
 
-# 2. 安装 NodeX
-opkg install nodex_*.ipk
+镜像已内置 xray 与 hysteria 内核，开箱即用。多节点：Web UI → 节点管理 → 新增节点。
 
-# 3. 启动
+### OpenWrt 方式
+
+```bash
+opkg install nodex_*.ipk   # 需自行安装 xray/hysteria 到 /usr/bin/
 /etc/init.d/nodex enable
 /etc/init.d/nodex start
-
-# 4. 打开管理界面
-# http://<路由器IP>:8888 （首次访问设置管理密码）
+# 管理界面: http://<路由器IP>:8888
 ```
 
 ## 面板配置步骤
@@ -82,6 +88,15 @@ cd webui && npm install && npm run build
 # 后端（需先构建前端，embed 依赖 dist）
 go build -o nodex ./cmd/nodex
 ```
+
+## 多节点架构
+
+每个节点独立运行：
+- 独立的 xray 进程（独立数据目录、独立 gRPC stats 端口 10085+）
+- 独立的 hysteria2 进程（独立 traffic API 端口 8444+）
+- 独立的面板同步循环（每个节点对接自己的面板节点 ID）
+
+系统设置中的路径/证书/端口基址为全局配置，各节点可单独覆盖协议参数。
 
 ## 目录结构
 
