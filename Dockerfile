@@ -14,8 +14,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd/ ./cmd/
 COPY internal/ ./internal/
-# 前端产物供 embed
-COPY --from=frontend /build/dist ./internal/web/dist
+# 前端产物供 embed（vite outDir 配置为 ../internal/web/dist）
+COPY --from=frontend /build/internal/web/dist ./internal/web/dist
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags "-s -w" -o nodex ./cmd/nodex
 
 # 阶段3: 运行镜像
