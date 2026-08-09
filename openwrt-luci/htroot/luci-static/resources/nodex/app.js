@@ -144,31 +144,32 @@
                     '</tr>';
             }).join('');
 
-            // 统计卡片
+            // 统计
             var xrayOn = nodes.filter(function (n) { return n.enabled && n.xray && n.xray.running; }).length;
             var xrayTotal = nodes.filter(function (n) { return n.enabled; }).length;
             var hy2On = nodes.filter(function (n) { return n.enabled && n.hy2 && n.hy2.running; }).length;
             var hy2Total = xrayTotal;
             var running = st.running || 0;
 
-            // 节点列表行（合并双内核状态）
+            // 节点状态：xray 或 hy2 任一运行即正常
+            function nodeState(n) {
+                if (!n.enabled) return tag(false, '已禁用');
+                var ok = (n.xray && n.xray.running) || (n.hy2 && n.hy2.running);
+                return ok ? tag(true, '正常') : tag(false, '停止');
+            }
+
+            // 节点列表行：名字 | 协议类型 | 状态 | 操作
             function nodeRow(n) {
-                var xok = n.xray && n.xray.running;
-                var hok = n.hy2 && n.hy2.running;
-                var stTag = !n.enabled ? tag(false, '已禁用')
-                    : (xok || hok) ? tag(true, '正常') : tag(false, '停止');
                 return '<tr>' +
                     '<td><b>' + esc(n.name) + '</b></td>' +
                     '<td>' + protoTag(n.protocol) + '</td>' +
-                    '<td><span class="nx-dot' + (xok ? ' on' : ' off') + '"></span> ' + (n.xray ? esc(n.xray.version.split(' ')[0]) : '-') + '</td>' +
-                    '<td><span class="nx-dot' + (hok ? ' on' : ' off') + '"></span> ' + (n.hy2 && n.hy2.running ? esc(n.hy2.version.split(' ')[1] || 'v2') : '-') + '</td>' +
-                    '<td>' + stTag + '</td>' +
+                    '<td>' + nodeState(n) + '</td>' +
                     '<td><button class="nodex-btn" onclick="window.nodexRestart(\'' + n.id + '\')">重启</button>' +
                     '<a class="nodex-btn" href="javascript:void(0)" onclick="window.nodexGoEdit(\'' + n.id + '\')">配置</a></td>' +
                     '</tr>';
             }
 
-            // 面板同步（公共）+ 后端状态（合并为系统状态行）
+            // 面板同步状态（公共）
             var panelErrs = nodes.filter(function (n) { return n.panel && n.panel.lastError; });
             var panelOk = nodes.length > 0 && panelErrs.length === 0;
             var lastSync = '';
@@ -182,39 +183,46 @@
             el.innerHTML =
                 // 统计卡片
                 '<div class="nx-stats">' +
-                '<div class="nx-stat"><div class="num">' + nodes.length + '</div><div class="lbl">节点总数</div></div>' +
+                '<div class="nx-stat"><div class="num">' + nodes.length + '</div><div class="lbl">节点</div></div>' +
                 '<div class="nx-stat"><div class="num' + (running > 0 ? ' ok' : '') + '">' + running + '</div><div class="lbl">运行中</div></div>' +
                 '<div class="nx-stat"><div class="num' + (online > 0 ? ' ok' : '') + '">' + online + '</div><div class="lbl">在线用户</div></div>' +
                 '<div class="nx-stat"><div class="num">' + fmtBytes(total) + '</div><div class="lbl">总流量</div></div>' +
+                '</div>' +
+                // 功能入口卡片（菜单卡片化）
+                '<div class="nx-funcs">' +
+                '<a class="nx-func" href="javascript:void(0)" onclick="window.nodexGo(\'nodes\')"><div class="ic">📋</div><div class="t">节点管理</div><div class="d">新增 / 编辑 / 删除节点</div></a>' +
+                '<a class="nx-func" href="javascript:void(0)" onclick="window.nodexGo(\'panel\')"><div class="ic">🔗</div><div class="t">面板对接</div><div class="d">Xboard 面板配置</div></a>' +
+                '<a class="nx-func" href="javascript:void(0)" onclick="window.nodexGo(\'system\')"><div class="ic">⚙️</div><div class="t">系统设置</div><div class="d">内核 / 路径 / 密码</div></a>' +
+                '<a class="nx-func" href="javascript:void(0)" onclick="window.nodexGo(\'logs\')"><div class="ic">📄</div><div class="t">运行日志</div><div class="d">节点日志实时查看</div></a>' +
                 '</div>' +
                 // 内核总开关
                 '<div class="nodex-card"><h3>内核总开关</h3>' +
                 '<div class="nx-kernel-row"><span class="nx-kernel-name">Xray</span>' +
                 '<span class="nx-kernel-dots">' + nodes.map(function (n) { return '<span class="nx-dot' + (n.xray && n.xray.running ? ' on' : ' off') + '"></span>'; }).join('') + '</span>' +
-                '<span>' + (xrayOn === 0 ? tag(false, '已停止') : (xrayOn === xrayTotal ? tag(true, '运行中') : '<span class="nodex-tag nodex-tag-ok">' + xrayOn + '/' + xrayTotal + ' 运行</span>')) + '</span>' +
+                '<span>' + (xrayOn === 0 ? tag(false, '已停止') : (xrayOn === xrayTotal ? tag(true, '运行中') : '<span class="nodex-tag nodex-tag-ok">' + xrayOn + '/' + xrayTotal + '</span>')) + '</span>' +
                 '<span style="margin-left:auto"><button class="nodex-btn" onclick="window.nodexKernel(\'stop-xray\')">停止</button> ' +
                 '<button class="nodex-btn nodex-btn-primary" onclick="window.nodexKernel(\'start-xray\')">启动</button></span></div>' +
                 '<div class="nx-kernel-row"><span class="nx-kernel-name">Hysteria2</span>' +
                 '<span class="nx-kernel-dots">' + nodes.map(function (n) { return '<span class="nx-dot' + (n.hy2 && n.hy2.running ? ' on' : ' off') + '"></span>'; }).join('') + '</span>' +
-                '<span>' + (hy2On === 0 ? tag(false, '已停止') : (hy2On === hy2Total ? tag(true, '运行中') : '<span class="nodex-tag nodex-tag-ok">' + hy2On + '/' + hy2Total + ' 运行</span>')) + '</span>' +
+                '<span>' + (hy2On === 0 ? tag(false, '已停止') : (hy2On === hy2Total ? tag(true, '运行中') : '<span class="nodex-tag nodex-tag-ok">' + hy2On + '/' + hy2Total + '</span>')) + '</span>' +
                 '<span style="margin-left:auto"><button class="nodex-btn" onclick="window.nodexKernel(\'stop-hy2\')">停止</button> ' +
                 '<button class="nodex-btn nodex-btn-primary" onclick="window.nodexKernel(\'start-hy2\')">启动</button></span></div>' +
                 '</div>' +
-                // 节点列表
+                // 节点列表（名字/类型/状态/操作）
                 '<div class="nodex-card"><h3>节点列表</h3>' +
-                '<table class="nodex-table"><tr><th>节点</th><th>类型</th><th>Xray</th><th>Hysteria2</th><th>状态</th><th>操作</th></tr>' +
-                (nodes.map(nodeRow).join('') || '<tr><td colspan="6">暂无节点</td></tr>') +
-                '</table></div>' +
-                // 系统状态（面板同步）
+                '<div class="nx-table-wrap"><table class="nodex-table"><tr><th>节点</th><th>协议类型</th><th>状态</th><th>操作</th></tr>' +
+                (nodes.map(nodeRow).join('') || '<tr><td colspan="4">暂无节点</td></tr>') +
+                '</table></div></div>' +
+                // 系统状态
                 '<div class="nodex-card"><h3>系统状态</h3>' +
                 '<table class="nodex-table"><tr><th>面板同步</th><th>上次同步</th></tr>' +
                 '<tr><td>' + panelHtml + '</td><td>' + esc(lastSync || '-') + '</td></tr></table></div>' +
                 // 用户流量
                 '<div class="nodex-card"><h3>用户流量</h3>' +
-                '<table class="nodex-table"><tr><th>节点</th><th>用户</th><th>流量</th><th>在线 IP</th></tr>' +
+                '<div class="nx-table-wrap"><table class="nodex-table"><tr><th>节点</th><th>用户</th><th>流量</th><th>在线 IP</th></tr>' +
                 (users.map(function (u) {
                     return '<tr><td>' + esc(u.node_name || '-') + '</td><td>' + esc(u.uid) + '</td><td>' + fmtBytes(u.traffic) + '</td><td>' + esc((u.ips || []).join(', ') || '-') + '</td></tr>';
-                }).join('') || '<tr><td colspan="4" style="color:#999">暂无流量数据（用户连接节点后自动统计）</td></tr>') + '</table></div>';
+                }).join('') || '<tr><td colspan="4" style="color:#999">暂无流量数据（用户连接节点后自动统计）</td></tr>') + '</table></div></div>';
         }).catch(function (e) { el.innerHTML = '<div class="nodex-err">加载失败: ' + esc(e.message) + '</div>'; });
     }
 

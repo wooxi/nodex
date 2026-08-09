@@ -71,7 +71,34 @@ local uci = require "luci.model.uci".cursor()
 /* 日志工具栏 */
 .nx-logbar { display:flex; align-items:center; gap:10px; margin-bottom:10px; flex-wrap:wrap; }
 .nx-logbar .info { margin-left:auto; font-size:12px; color:#999; }
-@media (max-width:900px){ .nx-stats{grid-template-columns:repeat(2,1fr);} }
+/* 功能入口卡片 */
+.nx-funcs { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:14px; }
+.nx-func { background:#fff; border:1px solid #e5e9ef; border-radius:8px; padding:14px; cursor:pointer;
+  transition:all .15s; display:block; text-decoration:none; color:#333; }
+.nx-func:hover { border-color:#1e88e5; box-shadow:0 2px 8px rgba(30,136,229,.12); transform:translateY(-1px); }
+.nx-func .ic { font-size:20px; margin-bottom:6px; }
+.nx-func .t { font-weight:600; font-size:13px; }
+.nx-func .d { font-size:11px; color:#999; margin-top:2px; }
+/* 表格响应式 */
+.nx-table-wrap { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+.nx-table-wrap table { min-width:520px; }
+/* 菜单响应式 */
+#nodex-menu { display:flex; overflow-x:auto; -webkit-overflow-scrolling:touch; }
+#nodex-menu .nodex-menu-item { flex-shrink:0; }
+/* 移动端适配 */
+@media (max-width:900px){
+  .nx-funcs { grid-template-columns:repeat(2,1fr); }
+  .nx-stats { grid-template-columns:repeat(2,1fr); }
+}
+@media (max-width:600px){
+  .nx-stats { grid-template-columns:repeat(2,1fr); gap:8px; }
+  .nx-stat { padding:10px; }
+  .nx-stat .num { font-size:20px; }
+  .nodex-field label { width:110px; }
+  .nodex-field input[type=text], .nodex-field textarea { width:100% !important; box-sizing:border-box; }
+  .nodex-card { padding:10px; }
+  .nx-kernel-name { width:90px; }
+}
 .nodex-err { color:#c62828; font-size:13px; margin:8px 0; }
 .nodex-ok { color:#2e7d32; font-size:13px; margin:8px 0; }
 .nodex-proto { display:inline-block; padding:8px 14px; margin:0 6px 6px 0; border:1px solid #ccc; border-radius:4px; cursor:pointer; font-size:13px; }
