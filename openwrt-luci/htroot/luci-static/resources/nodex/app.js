@@ -76,14 +76,18 @@
                 return ok ? tag(true, '正常') : tag(false, '停止');
             }
 
-            // 统计卡片
+            // 系统状态仪表盘（大框：统计 + 面板同步）
             var stats =
-                '<div class="nx-stats">' +
-                '<div class="nx-stat"><div class="num">' + nodes.length + '</div><div class="lbl">节点</div></div>' +
-                '<div class="nx-stat"><div class="num' + (running > 0 ? ' ok' : '') + '">' + running + '</div><div class="lbl">运行中</div></div>' +
-                '<div class="nx-stat"><div class="num' + (online > 0 ? ' ok' : '') + '">' + online + '</div><div class="lbl">在线用户</div></div>' +
-                '<div class="nx-stat"><div class="num">' + fmtBytes(total) + '</div><div class="lbl">总流量</div></div>' +
-                '</div>';
+                '<div class="cbi-section cbi-section-node" style="margin-bottom:14px"><div class="cbi-section-node-tabbed"><div class="nx-dash">' +
+                '<div class="nx-dash-item"><div class="num">' + nodes.length + '</div><div class="lbl">节点</div></div>' +
+                '<div class="nx-dash-sep"></div>' +
+                '<div class="nx-dash-item"><div class="num' + (running > 0 ? ' ok' : '') + '">' + running + '</div><div class="lbl">运行中</div></div>' +
+                '<div class="nx-dash-sep"></div>' +
+                '<div class="nx-dash-item"><div class="num' + (online > 0 ? ' ok' : '') + '">' + online + '</div><div class="lbl">在线用户</div></div>' +
+                '<div class="nx-dash-sep"></div>' +
+                '<div class="nx-dash-item"><div class="num">' + fmtBytes(total) + '</div><div class="lbl">总流量</div></div>' +
+                '<div class="nx-dash-sync">面板同步 ' + (nodes.length === 0 ? '<span style="color:#999">未配置</span>' : (panelOk ? tag(true, '正常') : tag(false, '错误')) + ' · ' + esc(lastSync || '-')) + '</div>' +
+                '</div></div></div>';
 
             // 内核总开关
             var xrayOn = nodes.filter(function (n) { return n.enabled && n.xray && n.xray.running; }).length;
@@ -135,19 +139,11 @@
                 (rows || '<tr><td colspan="4" class="nx-empty">暂无节点</td></tr>') +
                 '</table></div></div></div>';
 
-            // 系统状态（面板同步）
+            // 面板同步状态（供仪表盘右上角展示）
             var panelErrs = nodes.filter(function (n) { return n.panel && n.panel.lastError; });
             var panelOk = nodes.length > 0 && panelErrs.length === 0;
             var lastSync = '';
             nodes.forEach(function (n) { if (n.panel && n.panel.lastSync) lastSync = n.panel.lastSync; });
-            var syscard =
-                '<div class="cbi-section cbi-section-node" style="margin-bottom:14px"><div class="cbi-section-node-tabbed">' +
-                '<h3 style="margin:0 0 8px 0">系统状态</h3>' +
-                '<div class="nx-table-wrap"><table class="cbi-section-table">' +
-                '<tr class="cbi-section-table-titles"><th>面板同步</th><th>上次同步</th></tr>' +
-                '<tr class="cbi-section-table-row"><td>' + (nodes.length === 0 ? '<span style="color:#999">未配置</span>' : (panelOk ? tag(true, '正常') : tag(false, '错误'))) + '</td>' +
-                '<td>' + esc(lastSync || '-') + '</td></tr>' +
-                '</table></div></div></div>';
 
             // 用户流量
             var urows = users.map(function (u) {
@@ -166,7 +162,6 @@
                 '<div class="nx-grid">' +
                 '<div class="nx-span2">' + stats + '</div>' +
                 kmaster +
-                syscard +
                 nodelist +
                 usercard +
                 '</div>';
