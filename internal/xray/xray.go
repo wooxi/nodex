@@ -59,10 +59,12 @@ func (m *Manager) UpdateConfig(node *config.Node, global *config.Config) {
 	m.global = global
 }
 
-// IsRunning 检查 xray 进程是否存活（pid 文件 + 端口双重检测）
+// IsRunning 检查 xray 进程是否存活（进程句柄 + pid 文件 + 端口三重检测）
 func (m *Manager) IsRunning() bool {
-	if m.cmd != nil && m.cmd.Process != nil && (m.cmd.ProcessState == nil || !m.cmd.ProcessState.Exited()) {
-		return true
+	if m.cmd != nil && m.cmd.Process != nil {
+		// 注意：不能用 ProcessState.Exited()——被信号杀死的进程 WIFEXITED 为 false，
+		// 误报存活导致看门狗不拉起。用 Signal(0) 做存活探测。
+		return m.cmd.Process.Signal(syscall.Signal(0)) == nil
 	}
 	pid := m.readPID()
 	if pid > 0 {
@@ -115,8 +117,8 @@ func (m *Manager) writePID(pid int) {
 
 // Start 生成配置并启动 xray
 func (m *Manager) Start() error {
-	// 自己启动的进程还在跑则跳过
-	if m.cmd != nil && m.cmd.Process != nil && (m.cmd.ProcessState == nil || !m.cmd.ProcessState.Exited()) {
+	// 自己启动的进程还在跑则跳过（Signal(0) 存活探测，信号杀死的进程不视为存活）
+	if m.cmd != nil && m.cmd.Process != nil && m.cmd.Process.Signal(syscall.Signal(0)) == nil {
 		return nil
 	}
 	// 残留进程（pid 文件记录但非本实例启动，如重启/崩溃遗留）：先清理

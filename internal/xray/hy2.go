@@ -80,7 +80,9 @@ func (m *Hy2Manager) pidFile() string    { return filepath.Join(m.dir, "hy2", "h
 
 func (m *Hy2Manager) IsRunning() bool {
 	if m.cmd != nil && m.cmd.Process != nil {
-		return m.cmd.ProcessState == nil || !m.cmd.ProcessState.Exited()
+		// 注意：不能只用 ProcessState.Exited()——被信号杀死的进程 WIFEXITED 为 false，
+		// 会误报存活导致看门狗不拉起。用 Signal(0) 做存活探测。
+		return m.cmd.Process.Signal(syscall.Signal(0)) == nil
 	}
 	if data, err := os.ReadFile(m.pidFile()); err == nil {
 		if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
@@ -138,8 +140,8 @@ func (m *Hy2Manager) BuildConfig(authURL, trafficSecret string) (string, error) 
 
 // Start 生成配置并启动 hysteria2
 func (m *Hy2Manager) Start() error {
-	// 自己启动的进程还在跑则跳过
-	if m.cmd != nil && m.cmd.Process != nil && (m.cmd.ProcessState == nil || !m.cmd.ProcessState.Exited()) {
+	// 自己启动的进程还在跑则跳过（Signal(0) 存活探测，信号杀死的进程不视为存活）
+	if m.cmd != nil && m.cmd.Process != nil && m.cmd.Process.Signal(syscall.Signal(0)) == nil {
 		return nil
 	}
 	// 残留进程先清理（确保带当前环境重启）
