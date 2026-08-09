@@ -52,9 +52,9 @@ function backend_ctl(action)
         local script = [[
 #!/bin/sh
 set -e
-NODEX_URL="https://github.com/wooxi/nodex/releases/latest/download/nodex-linux-amd64"
-XRAY_URL="https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip"
-HY_URL="https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-amd64"
+NODEX_URL="https://github.com/wooxi/nodex-luci/releases/latest/download/nodex-linux-amd64"
+XRAY_URL="https://github.com/wooxi/nodex-luci/releases/latest/download/xray-linux-amd64"
+HY_URL="https://github.com/wooxi/nodex-luci/releases/latest/download/hysteria-linux-amd64"
 
 WORK=/tmp/nodex-install
 rm -rf $WORK
