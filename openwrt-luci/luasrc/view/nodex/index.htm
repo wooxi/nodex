@@ -58,6 +58,12 @@ html.dark #nodex-app .nx-msg.ok { background:#1b3a22; }
 html.dark #nodex-app .nx-msg.err { background:#3d1f1f; }
 #nodex-app .nx-empty { color:#999; text-align:center; padding:20px 0; font-size:13px; }
 #nodex-app .nx-table-wrap { overflow-x:auto; }
+/* 电脑端双列布局（紧凑） */
+#nodex-app .nx-grid { display:grid; grid-template-columns:1fr; gap:0 14px; align-items:start; }
+@media (min-width:1200px) {
+    #nodex-app .nx-grid { grid-template-columns:1fr 1fr; }
+}
+#nodex-app .nx-span2 { grid-column:1/-1; }
 @media (max-width:700px) {
     #nodex-app .nx-stats { grid-template-columns:repeat(2,1fr); }
     #nodex-app .cbi-value-title { width:110px; }

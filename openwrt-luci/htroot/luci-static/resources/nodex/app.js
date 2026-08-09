@@ -94,19 +94,27 @@
                 if (on === total) return tag(true, '运行中');
                 return '<span style="color:#c47d14;font-weight:600">' + on + '/' + total + '</span>';
             }
+            // 内核总开关（表格化，对齐紧凑）
+            function krow(name, dots, status, stopAct, startAct) {
+                return '<tr class="cbi-section-table-row">' +
+                    '<td><b>' + name + '</b></td>' +
+                    '<td style="white-space:nowrap">' + dots + '</td>' +
+                    '<td>' + status + '</td>' +
+                    '<td style="white-space:nowrap;text-align:right">' +
+                    '<input type="button" class="cbi-button cbi-button-negative" style="margin-right:4px" value="停止" onclick="window.nodexKernel(\'' + stopAct + '\')">' +
+                    '<input type="button" class="cbi-button cbi-button-positive" value="启动" onclick="window.nodexKernel(\'' + startAct + '\')">' +
+                    '</td></tr>';
+            }
+            function kdots(kind) {
+                return nodes.map(function (n) { return '<span class="nx-dot' + (n[kind] && n[kind].running ? ' on' : ' off') + '"></span>'; }).join(' ');
+            }
             var kmaster =
                 '<div class="cbi-section cbi-section-node" style="margin-bottom:14px"><div class="cbi-section-node-tabbed"><h3 style="margin:0 0 8px 0">内核总开关</h3>' +
-                '<div class="nx-krow"><span class="nx-kname">Xray</span>' +
-                '<span class="nx-kdots">' + nodes.map(function (n) { return '<span class="nx-dot' + (n.xray && n.xray.running ? ' on' : ' off') + '"></span>'; }).join('') + '</span>' +
-                '<span>' + kstatus(xrayOn, enTotal) + '</span>' +
-                '<span style="margin-left:auto"><input type="button" class="cbi-button cbi-button-negative" value="停止" onclick="window.nodexKernel(\'stop-xray\')"> ' +
-                '<input type="button" class="cbi-button cbi-button-positive" value="启动" onclick="window.nodexKernel(\'start-xray\')"></span></div>' +
-                '<div class="nx-krow"><span class="nx-kname">Hysteria2</span>' +
-                '<span class="nx-kdots">' + nodes.map(function (n) { return '<span class="nx-dot' + (n.hy2 && n.hy2.running ? ' on' : ' off') + '"></span>'; }).join('') + '</span>' +
-                '<span>' + kstatus(hy2On, enTotal) + '</span>' +
-                '<span style="margin-left:auto"><input type="button" class="cbi-button cbi-button-negative" value="停止" onclick="window.nodexKernel(\'stop-hy2\')"> ' +
-                '<input type="button" class="cbi-button cbi-button-positive" value="启动" onclick="window.nodexKernel(\'start-hy2\')"></span></div>' +
-                '</div></div>';
+                '<div class="nx-table-wrap"><table class="cbi-section-table">' +
+                '<tr class="cbi-section-table-titles"><th>内核</th><th>节点状态</th><th>状态</th><th style="text-align:right">操作</th></tr>' +
+                krow('Xray', kdots('xray'), kstatus(xrayOn, enTotal), 'stop-xray', 'start-xray') +
+                krow('Hysteria2', kdots('hy2'), kstatus(hy2On, enTotal), 'stop-hy2', 'start-hy2') +
+                '</table></div></div></div>';
 
             // 节点列表（名字/类型/状态/操作）
             var rows = nodes.map(function (n) {
@@ -154,7 +162,14 @@
                 (urows || '<tr><td colspan="4" class="nx-empty">暂无流量数据（用户连接节点后自动统计）</td></tr>') +
                 '</table></div></div></div>';
 
-            el.innerHTML = stats + kmaster + nodelist + syscard + usercard;
+            el.innerHTML =
+                '<div class="nx-grid">' +
+                '<div class="nx-span2">' + stats + '</div>' +
+                kmaster +
+                syscard +
+                nodelist +
+                usercard +
+                '</div>';
         }).catch(function (e) { el.innerHTML = '<div class="nx-msg err">' + esc(e.message) + '</div>'; });
     }
 
