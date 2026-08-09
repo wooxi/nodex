@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -515,6 +516,7 @@ func (m *Manager) CoreInfo(kind string) map[string]any {
 }
 
 // UpdateCore 下载并更新核心二进制（nodex release 统一托管）
+// 下载到数据目录 /etc/nodex/bin/ 并持久化配置路径（Docker 容器重启后内核保留）
 func (m *Manager) UpdateCore(kind string) (string, error) {
 	if kind != "xray" && kind != "hysteria" {
 		return "", fmt.Errorf("未知核心类型: %s", kind)
@@ -526,7 +528,12 @@ func (m *Manager) UpdateCore(kind string) (string, error) {
 	}()
 
 	url := fmt.Sprintf("https://github.com/wooxi/nodex/releases/latest/download/%s-linux-amd64", kind)
-	tmp := filepath.Join(os.TempDir(), "nodex-core-"+kind)
+	// 持久化内核目录（Docker volume 挂载的数据目录）
+	binDir := filepath.Join(m.globalCfg().System.DataDir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		return "", fmt.Errorf("创建内核目录失败: %v", err)
+	}
+	tmp := filepath.Join(binDir, ".nodex-core-"+kind)
 	client := &http.Client{Timeout: 10 * time.Minute}
 	resp, err := client.Get(url)
 	if err != nil {
@@ -550,14 +557,27 @@ func (m *Manager) UpdateCore(kind string) (string, error) {
 	if err := os.WriteFile(tmp, data, 0o755); err != nil {
 		return "", fmt.Errorf("写入失败: %v", err)
 	}
-	path := m.globalCfg().System.XrayPath
-	if kind == "hysteria" {
-		path = m.globalCfg().System.HysteriaPath
-	}
+	path := filepath.Join(binDir, kind)
 	if err := os.Rename(tmp, path); err != nil {
 		return "", fmt.Errorf("替换失败: %v", err)
 	}
 	os.Chmod(path, 0o755)
+
+	// 持久化内核路径到配置（Docker 重启后 /etc/nodex 卷保留内核与路径）
+	cfg := m.globalCfg()
+	newCfg := &config.Config{}
+	if data, err := json.Marshal(cfg); err == nil {
+		if err := json.Unmarshal(data, newCfg); err == nil {
+			if kind == "xray" {
+				newCfg.System.XrayPath = path
+			} else {
+				newCfg.System.HysteriaPath = path
+			}
+			newCfg.Save(m.cfgPath)
+			m.setGlobal(newCfg)
+			m.Rebuild(newCfg)
+		}
+	}
 	info := m.CoreInfo(kind)
 	return info["version"].(string), nil
 }
