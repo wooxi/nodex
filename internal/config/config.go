@@ -318,10 +318,7 @@ func (c *Config) Validate() error {
 		if n.Node.Port < 1 || n.Node.Port > 65535 {
 			return errors.New("节点 [" + n.Name + "] 端口无效")
 		}
-		// Trojan 协议必须启用 TLS（协议本身要求）
-		if n.Node.Protocol == "trojan" && n.Node.TLS != 1 {
-			return errors.New("节点 [" + n.Name + "] Trojan 协议必须启用 TLS（TLS 类型选「TLS 证书」）")
-		}
+		// Trojan 必须 TLS：EnsureDefaults 已强制 tls=1，这里保留证书必填校验
 		if n.Node.Protocol == "trojan" && n.Node.CertPath == "" {
 			return errors.New("节点 [" + n.Name + "] Trojan 协议必须填写证书路径")
 		}

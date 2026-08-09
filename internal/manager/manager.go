@@ -33,9 +33,55 @@ type Runtime struct {
 	Stats  *xray.StatsCollector
 	Syncer *panel.Syncer
 
-	xrayPaused bool // 内核总开关：暂停 xray（看门狗不自动拉起）
-	hy2Paused  bool // 内核总开关：暂停 hysteria2
-	stopped    bool // 用户手动停止该节点（看门狗不自动拉起）
+	mu         sync.RWMutex // 保护以下状态字段（看门狗并发读 vs handler 写）
+	xrayPaused bool         // 内核总开关：暂停 xray（看门狗不自动拉起）
+	hy2Paused  bool         // 内核总开关：暂停 hysteria2
+	stopped    bool         // 用户手动停止该节点（看门狗不自动拉起）
+
+	// 版本缓存（避免每次状态轮询 exec 子进程）
+	versionMu   sync.Mutex
+	xrayVer     string
+	hy2Ver      string
+	verCacheAt  time.Time
+}
+
+// 状态字段安全访问（看门狗读 / handler 写）
+func (rt *Runtime) setStopped(v bool)    { rt.mu.Lock(); rt.stopped = v; rt.mu.Unlock() }
+func (rt *Runtime) setXrayPaused(v bool) { rt.mu.Lock(); rt.xrayPaused = v; rt.mu.Unlock() }
+func (rt *Runtime) setHy2Paused(v bool)  { rt.mu.Lock(); rt.hy2Paused = v; rt.mu.Unlock() }
+func (rt *Runtime) setCfg(c *config.Node) { rt.mu.Lock(); rt.Cfg = c; rt.mu.Unlock() }
+
+// stateSnapshot 原子读取看门狗关心的状态
+func (rt *Runtime) stateSnapshot() (enabled, stopped, xrayPaused, hy2Paused bool) {
+	rt.mu.RLock()
+	defer rt.mu.RUnlock()
+	return rt.Cfg.Enabled, rt.stopped, rt.xrayPaused, rt.hy2Paused
+}
+
+// cfgSnapshot 原子读取节点配置指针
+func (rt *Runtime) cfgSnapshot() *config.Node {
+	rt.mu.RLock()
+	defer rt.mu.RUnlock()
+	return rt.Cfg
+}
+
+// cachedVersion 带 TTL 的版本缓存（60s），避免状态轮询反复 exec
+func (rt *Runtime) cachedVersion(kind string) string {
+	rt.versionMu.Lock()
+	defer rt.versionMu.Unlock()
+	if time.Since(rt.verCacheAt) < 60*time.Second {
+		if kind == "xray" {
+			return rt.xrayVer
+		}
+		return rt.hy2Ver
+	}
+	rt.xrayVer = rt.Xray.Version()
+	rt.hy2Ver = rt.Hy2.Version()
+	rt.verCacheAt = time.Now()
+	if kind == "xray" {
+		return rt.xrayVer
+	}
+	return rt.hy2Ver
 }
 
 // Manager 多节点管理器
@@ -55,6 +101,20 @@ func New(global *config.Config, cfgPath string) *Manager {
 		cfgPath: cfgPath,
 		nodes:   map[string]*Runtime{},
 	}
+}
+
+// setGlobal 原子替换全局配置（immutable swap：读取方持旧指针读旧内容，安全）
+func (m *Manager) setGlobal(cfg *config.Config) {
+	m.mu.Lock()
+	m.global = cfg
+	m.mu.Unlock()
+}
+
+// globalCfg 原子获取全局配置指针
+func (m *Manager) globalCfg() *config.Config {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.global
 }
 
 // ---------- 看门狗：内核崩溃自动拉起 ----------
@@ -82,6 +142,15 @@ func (m *Manager) stopWatchdog() {
 
 // watchdogLoop 每 10s 检查一次：启用节点任一内核未运行则自动拉起（受内核总开关暂停状态约束）
 func (m *Manager) watchdogLoop(stop chan struct{}) {
+	// 退出时自我清理：若 m.watchdog 仍指向本 goroutine 的 channel 则置 nil，
+	// 避免 start/stop 交错后 startWatchdog 误判"已在运行"导致看门狗永久失效
+	defer func() {
+		m.watchdogM.Lock()
+		if m.watchdog == stop {
+			m.watchdog = nil
+		}
+		m.watchdogM.Unlock()
+	}()
 	t := time.NewTicker(10 * time.Second)
 	defer t.Stop()
 	for {
@@ -90,15 +159,16 @@ func (m *Manager) watchdogLoop(stop chan struct{}) {
 			return
 		case <-t.C:
 			for _, rt := range m.Runtimes() {
-				if !rt.Cfg.Enabled || rt.stopped {
+				enabled, stopped, xrayPaused, hy2Paused := rt.stateSnapshot()
+				if !enabled || stopped {
 					continue
 				}
 				need := false
-				if !rt.xrayPaused && !rt.Xray.IsRunning() {
+				if !xrayPaused && !rt.Xray.IsRunning() {
 					log.Printf("[nodex][%s] 检测到 xray 未运行，自动拉起", rt.Cfg.ID)
 					need = true
 				}
-				if !rt.hy2Paused && !rt.Hy2.IsRunning() {
+				if !hy2Paused && !rt.Hy2.IsRunning() {
 					log.Printf("[nodex][%s] 检测到 hysteria2 未运行，自动拉起", rt.Cfg.ID)
 					need = true
 				}
@@ -168,7 +238,7 @@ func (m *Manager) StartAll() {
 // Start 启动单个节点（UI 操作，不受内核总开关暂停影响）
 func (m *Manager) Start(id string) {
 	rt := m.Get(id)
-	if rt == nil || !rt.Cfg.Enabled {
+	if rt == nil || !rt.cfgSnapshot().Enabled {
 		return
 	}
 	m.startOne(rt)
@@ -176,11 +246,13 @@ func (m *Manager) Start(id string) {
 
 // startOne 启动单个节点的全部组件
 func (m *Manager) startOne(rt *Runtime) {
-	rt.stopped = false // 显式启动：清除用户停止意图（看门狗恢复监控）
+	rt.setStopped(false) // 显式启动：清除用户停止意图（看门狗恢复监控）
+	cfg := m.globalCfg()
+	rtCfg := rt.cfgSnapshot()
 	// 注入认证信息
-	rt.Hy2.SetAuth(fmt.Sprintf("http://127.0.0.1:%d/api/hy2-auth?node=%s", m.global.Web.Port, rt.Cfg.ID), rt.Syncer.Hy2Secret())
+	rt.Hy2.SetAuth(fmt.Sprintf("http://127.0.0.1:%d/api/hy2-auth?node=%s", cfg.Web.Port, rtCfg.ID), rt.Syncer.Hy2Secret())
 	// 本地模式（面板未启用）注入本地用户
-	if !m.global.Panel.Enabled && rt.Cfg.Node.UUID != "" {
+	if !cfg.Panel.Enabled && rtCfg.Node.UUID != "" {
 		rt.Xray.SetUsers([]xray.User{{ID: 1, UUID: rt.Cfg.Node.UUID}})
 		rt.Hy2.SetUsers([]xray.User{{ID: 1, UUID: rt.Cfg.Node.UUID}})
 	}
@@ -210,7 +282,7 @@ func (m *Manager) Stop(id string) {
 	if rt == nil {
 		return
 	}
-	rt.stopped = true
+	rt.setStopped(true)
 	rt.Syncer.Stop()
 	rt.Xray.Stop()
 	rt.Hy2.Stop()
@@ -221,7 +293,7 @@ func (m *Manager) Stop(id string) {
 func (m *Manager) Restart(id string) {
 	m.Stop(id)
 	time.Sleep(300 * time.Millisecond)
-	if rt := m.Get(id); rt != nil && rt.Cfg.Enabled {
+	if rt := m.Get(id); rt != nil && rt.cfgSnapshot().Enabled {
 		rt.Stats.Reset()
 		rt.Syncer.ResetHy2()
 		m.startOne(rt)
@@ -231,7 +303,7 @@ func (m *Manager) Restart(id string) {
 // StopAllXray 停止所有节点的 xray
 func (m *Manager) StopAllXray() {
 	for _, rt := range m.Runtimes() {
-		rt.xrayPaused = true
+		rt.setXrayPaused(true)
 		rt.Xray.Stop()
 	}
 }
@@ -239,8 +311,8 @@ func (m *Manager) StopAllXray() {
 // StartAllXray 启动所有启用节点的 xray
 func (m *Manager) StartAllXray() {
 	for _, rt := range m.Runtimes() {
-		rt.xrayPaused = false
-		if !rt.Cfg.Enabled {
+		rt.setXrayPaused(false)
+		if !rt.cfgSnapshot().Enabled {
 			continue
 		}
 		if err := rt.Xray.Start(); err != nil {
@@ -255,7 +327,7 @@ func (m *Manager) StartAllXray() {
 // StopAllHy2 停止所有节点的 hysteria2
 func (m *Manager) StopAllHy2() {
 	for _, rt := range m.Runtimes() {
-		rt.hy2Paused = true
+		rt.setHy2Paused(true)
 		rt.Hy2.Stop()
 		rt.Syncer.ResetHy2()
 	}
@@ -263,12 +335,13 @@ func (m *Manager) StopAllHy2() {
 
 // StartAllHy2 启动所有启用节点的 hysteria2
 func (m *Manager) StartAllHy2() {
+	cfg := m.globalCfg()
 	for _, rt := range m.Runtimes() {
-		rt.hy2Paused = false
-		if !rt.Cfg.Enabled {
+		rt.setHy2Paused(false)
+		if !rt.cfgSnapshot().Enabled {
 			continue
 		}
-		rt.Hy2.SetAuth(fmt.Sprintf("http://127.0.0.1:%d/api/hy2-auth?node=%s", m.global.Web.Port, rt.Cfg.ID), rt.Syncer.Hy2Secret())
+		rt.Hy2.SetAuth(fmt.Sprintf("http://127.0.0.1:%d/api/hy2-auth?node=%s", cfg.Web.Port, rt.cfgSnapshot().ID), rt.Syncer.Hy2Secret())
 		if err := rt.Hy2.Start(); err != nil {
 			log.Printf("[nodex][%s] 启动 hysteria2 失败: %v", rt.Cfg.ID, err)
 		} else {
@@ -280,8 +353,8 @@ func (m *Manager) StartAllHy2() {
 // resetKernelPause 清除内核总开关暂停状态（全量重启/重建后）
 func (m *Manager) resetKernelPause() {
 	for _, rt := range m.Runtimes() {
-		rt.xrayPaused = false
-		rt.hy2Paused = false
+		rt.setXrayPaused(false)
+		rt.setHy2Paused(false)
 	}
 }
 
@@ -305,20 +378,20 @@ func (m *Manager) ApplyConfig(old, new *config.Config) {
 	// 节点结构/顺序或系统配置变更：全量重建（API 端口按索引派生，必须一致）
 	if !sameOrder || !reflect.DeepEqual(old.System, new.System) {
 		m.StopAll()
-		m.global = new
+		m.setGlobal(new)
 		m.Rebuild(new)
 		m.StartAll()
 		return
 	}
 
-	m.global = new
+	m.setGlobal(new)
 
 	// 面板全局参数变化：所有节点同步器原地更新（不重启内核），并触发立即同步
 	panelChanged := !reflect.DeepEqual(old.Panel, new.Panel)
 	if panelChanged {
 		for _, newN := range new.Nodes {
 			if rt := m.Get(newN.ID); rt != nil {
-				rt.Cfg = newN
+				rt.setCfg(newN)
 				rt.Syncer.UpdateConfig(newN, new)
 			}
 		}
@@ -335,7 +408,7 @@ func (m *Manager) ApplyConfig(old, new *config.Config) {
 			continue
 		}
 		if !panelChanged {
-			rt.Cfg = newN
+			rt.setCfg(newN)
 			rt.Syncer.UpdateConfig(newN, new)
 		}
 		// 内核相关参数（协议/端口/转发/启用状态）变化 → 重启该节点
@@ -360,20 +433,24 @@ func (m *Manager) SyncAll() {
 	}
 }
 
-// connectStats 连接节点 xray API（带重试）
+// connectStats 连接节点 xray API（无限重试，指数退避 2s→60s 封顶）
+// 避免 xray 启动慢/偶发失败时流量统计永久丢失
 func (m *Manager) connectStats(rt *Runtime) {
-	apiPort := m.global.System.APIPortBase + rt.Index
-	for i := 0; i < 15; i++ {
+	apiPort := m.globalCfg().System.APIPortBase + rt.Index
+	backoff := 2 * time.Second
+	for {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		err := rt.Stats.Connect(ctx, fmt.Sprintf("127.0.0.1:%d", apiPort))
 		cancel()
 		if err == nil {
-			log.Printf("[nodex][%s] 已连接 xray API", rt.Cfg.ID)
+			log.Printf("[nodex][%s] 已连接 xray API", rt.cfgSnapshot().ID)
 			return
 		}
-		time.Sleep(2 * time.Second)
+		time.Sleep(backoff)
+		if backoff < 60*time.Second {
+			backoff *= 2
+		}
 	}
-	log.Printf("[nodex][%s] 连接 xray API 失败（15 次重试后放弃）", rt.Cfg.ID)
 }
 
 // Status 返回全部节点状态
@@ -385,21 +462,22 @@ func (m *Manager) Status() []map[string]any {
 	return out
 }
 
-// Status 单节点状态
+// Status 单节点状态（版本走 60s 缓存，避免轮询频繁 exec）
 func (rt *Runtime) Status() map[string]any {
+	cfg := rt.cfgSnapshot()
 	return map[string]any{
-		"id":       rt.Cfg.ID,
-		"name":     rt.Cfg.Name,
-		"enabled":  rt.Cfg.Enabled,
-		"protocol": rt.Cfg.Node.Protocol,
+		"id":       cfg.ID,
+		"name":     cfg.Name,
+		"enabled":  cfg.Enabled,
+		"protocol": cfg.Node.Protocol,
 		"xray": map[string]any{
 			"running": rt.Xray.IsRunning(),
-			"version": rt.Xray.Version(),
+			"version": rt.cachedVersion("xray"),
 			"pid":     rt.Xray.Pid(),
 		},
 		"hy2": map[string]any{
 			"running": rt.Hy2.IsRunning(),
-			"version": rt.Hy2.Version(),
+			"version": rt.cachedVersion("hysteria"),
 			"pid":     rt.Hy2.Pid(),
 		},
 		"panel": rt.Syncer.Status(),
@@ -408,7 +486,7 @@ func (rt *Runtime) Status() map[string]any {
 
 // CoreInfo 核心二进制信息（版本 + 安装状态）
 func (m *Manager) CoreInfo(kind string) map[string]any {
-	path := m.global.System.XrayPath
+	path := m.globalCfg().System.XrayPath
 	if kind == "hysteria" {
 		path = m.global.System.HysteriaPath
 	}
@@ -472,9 +550,9 @@ func (m *Manager) UpdateCore(kind string) (string, error) {
 	if err := os.WriteFile(tmp, data, 0o755); err != nil {
 		return "", fmt.Errorf("写入失败: %v", err)
 	}
-	path := m.global.System.XrayPath
+	path := m.globalCfg().System.XrayPath
 	if kind == "hysteria" {
-		path = m.global.System.HysteriaPath
+		path = m.globalCfg().System.HysteriaPath
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		return "", fmt.Errorf("替换失败: %v", err)

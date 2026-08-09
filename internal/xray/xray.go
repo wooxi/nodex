@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"strings"
 	"syscall"
 	"time"
@@ -22,6 +23,7 @@ import (
 // Manager 管理单个节点的 xray 进程生命周期与配置生成
 // 每个节点独立进程、独立数据目录、独立 API 端口
 type Manager struct {
+	mu      sync.RWMutex
 	cfg     *config.Node // 节点配置
 	global  *config.Config
 	dir     string // 节点数据目录
@@ -29,6 +31,12 @@ type Manager struct {
 	cmd     *exec.Cmd
 	users   []User // 面板用户（由同步器注入）
 	remote  *RemoteConfig // 面板返回的节点配置（端口/网络/TLS）
+}
+
+func (m *Manager) globalCfg() *config.Config {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.global
 }
 
 // RemoteConfig 面板返回的节点参数（由同步器注入）
@@ -55,8 +63,10 @@ func (m *Manager) SetRemoteConfig(r *RemoteConfig) { m.remote = r }
 
 // UpdateConfig 以新配置重建（进程不重启，由外部调用 Restart）
 func (m *Manager) UpdateConfig(node *config.Node, global *config.Config) {
+	m.mu.Lock()
 	m.cfg = node
 	m.global = global
+	m.mu.Unlock()
 }
 
 // IsRunning 检查 xray 进程是否存活（进程句柄 + pid 文件 + 端口三重检测）
@@ -138,7 +148,7 @@ func (m *Manager) Start() error {
 		return err
 	}
 
-	bin := m.global.System.XrayPath
+	bin := m.globalCfg().System.XrayPath
 	if _, err := os.Stat(bin); err != nil {
 		return fmt.Errorf("xray 可执行文件不存在: %s", bin)
 	}
@@ -190,7 +200,7 @@ func (m *Manager) Restart() error {
 
 // Version 获取 xray 版本
 func (m *Manager) Version() string {
-	bin := m.global.System.XrayPath
+	bin := m.globalCfg().System.XrayPath
 	if _, err := os.Stat(bin); err != nil {
 		return "未安装"
 	}
@@ -245,7 +255,7 @@ type inbound struct {
 func (m *Manager) BuildConfig() ([]byte, error) {
 	users := m.users // 由 Panel 同步器注入
 
-	logLevel := m.global.System.LogLevel
+	logLevel := m.globalCfg().System.LogLevel
 	if logLevel == "" {
 		logLevel = "info"
 	}
@@ -280,7 +290,7 @@ func (m *Manager) BuildConfig() ([]byte, error) {
 	}
 
 	inbounds := []any{}
-	if m.global.Panel.Enabled && len(users) > 0 {
+	if m.globalCfg().Panel.Enabled && len(users) > 0 {
 		inbounds = append(inbounds, m.buildPanelInbound(users)...)
 	} else {
 		inbounds = append(inbounds, m.buildLocalInbound()...)

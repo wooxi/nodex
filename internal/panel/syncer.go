@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -258,8 +259,11 @@ func (s *Syncer) syncOnce() {
 	}
 
 	// 3.5 配置指纹变化时重启 xray + hy2（使 remote/users 生效）
+	// users 排序后进指纹：面板返回顺序抖动不触发无谓重启
+	sortedUsers := append([]xray.User(nil), users...)
+	sort.Slice(sortedUsers, func(i, j int) bool { return sortedUsers[i].ID < sortedUsers[j].ID })
 	fingerprint := fmt.Sprintf("%s|%d|%s|%d|%v|%d",
-		remoteCfg.Protocol, remoteCfg.Port, remoteCfg.Network, remoteCfg.TLS, users, s.hy2Port)
+		remoteCfg.Protocol, remoteCfg.Port, remoteCfg.Network, remoteCfg.TLS, sortedUsers, s.hy2Port)
 	if fingerprint != s.lastFingerprint {
 		s.lastFingerprint = fingerprint
 		if err := s.xm.Restart(); err != nil {

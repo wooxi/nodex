@@ -22,6 +22,7 @@ import (
 // 认证采用 auth.http 模式回调 NodeX，实现 per-user 流量统计：
 //   客户端 auth = 用户 uuid → NodeX 认证 API 返回 {ok, id: uid} → /traffic 按 uid 统计
 type Hy2Manager struct {
+	mu         sync.RWMutex
 	cfg        *config.Node // 节点配置
 	global     *config.Config
 	dir        string // 节点数据目录
@@ -37,13 +38,21 @@ type Hy2Manager struct {
 // SetRemotePort 设置面板端口（hysteria 节点时 hy2 端口跟随面板）
 func (m *Hy2Manager) SetRemotePort(p int) { m.remotePort = p }
 
+func (m *Hy2Manager) globalCfg() *config.Config {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.global
+}
+
 func NewHy2Manager(node *config.Node, global *config.Config, dir string, apiPort int) *Hy2Manager {
 	return &Hy2Manager{cfg: node, global: global, dir: dir, apiPort: apiPort}
 }
 
 func (m *Hy2Manager) UpdateConfig(node *config.Node, global *config.Config) {
+	m.mu.Lock()
 	m.cfg = node
 	m.global = global
+	m.mu.Unlock()
 }
 
 // SetAuth 设置认证回调与 traffic API 密钥
@@ -115,7 +124,7 @@ func (m *Hy2Manager) BuildConfig(authURL, trafficSecret string) (string, error) 
 	}
 	cert, key := cfg.CertPath, cfg.KeyPath
 	if cert == "" {
-		cert = m.global.System.CertPath
+		cert = m.globalCfg().System.CertPath
 		key = m.global.System.KeyPath
 	}
 	var b strings.Builder
@@ -163,7 +172,7 @@ func (m *Hy2Manager) Start() error {
 	if err := os.WriteFile(confPath, []byte(conf), 0o600); err != nil {
 		return err
 	}
-	bin := m.global.System.HysteriaPath
+	bin := m.globalCfg().System.HysteriaPath
 	if _, err := os.Stat(bin); err != nil {
 		return fmt.Errorf("hysteria 可执行文件不存在: %s", bin)
 	}
@@ -200,7 +209,7 @@ func (m *Hy2Manager) Stop() error {
 }
 
 func (m *Hy2Manager) Version() string {
-	bin := m.global.System.HysteriaPath
+	bin := m.globalCfg().System.HysteriaPath
 	if _, err := os.Stat(bin); err != nil {
 		return "未安装"
 	}
