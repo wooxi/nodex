@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -291,6 +292,7 @@ func (c *Config) Validate() error {
 		return errors.New("至少需要配置一个节点")
 	}
 	seen := map[string]bool{}
+	seenNodeID := map[int]string{}
 	for _, n := range c.Nodes {
 		if n.ID == "" {
 			return errors.New("节点 ID 不能为空")
@@ -302,6 +304,12 @@ func (c *Config) Validate() error {
 		if c.Panel.Enabled && n.NodeID <= 0 {
 			return errors.New("节点 [" + n.Name + "] 面板节点 ID 必须大于 0")
 		}
+		if n.NodeID > 0 {
+			if prev, ok := seenNodeID[n.NodeID]; ok {
+				return fmt.Errorf("节点 [%s] 与 [%s] 的面板节点 ID 重复: %d", n.Name, prev, n.NodeID)
+			}
+			seenNodeID[n.NodeID] = n.Name
+		}
 		switch n.Node.Protocol {
 		case "vless", "vmess", "trojan", "shadowsocks", "hysteria2":
 		default:
@@ -309,6 +317,13 @@ func (c *Config) Validate() error {
 		}
 		if n.Node.Port < 1 || n.Node.Port > 65535 {
 			return errors.New("节点 [" + n.Name + "] 端口无效")
+		}
+		// Trojan 协议必须启用 TLS（协议本身要求）
+		if n.Node.Protocol == "trojan" && n.Node.TLS != 1 {
+			return errors.New("节点 [" + n.Name + "] Trojan 协议必须启用 TLS（TLS 类型选「TLS 证书」）")
+		}
+		if n.Node.Protocol == "trojan" && n.Node.CertPath == "" {
+			return errors.New("节点 [" + n.Name + "] Trojan 协议必须填写证书路径")
 		}
 	}
 	return nil

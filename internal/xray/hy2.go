@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -29,7 +30,8 @@ type Hy2Manager struct {
 	secret     string // traffic API 密钥
 	remotePort int    // 面板返回的端口（面板优先）
 	cmd        *exec.Cmd
-	users      []User // uid -> uuid 映射
+	userMu     sync.RWMutex
+	userIdx    map[string]int64 // uuid -> uid（认证回调 O(1) 查询）
 }
 
 // SetRemotePort 设置面板端口（hysteria 节点时 hy2 端口跟随面板）
@@ -50,17 +52,26 @@ func (m *Hy2Manager) SetAuth(authURL, secret string) {
 	m.secret = secret
 }
 
-// SetUsers 注入用户列表（用于认证回调）
-func (m *Hy2Manager) SetUsers(users []User) { m.users = users }
+// SetUsers 注入用户列表（构建 uuid→uid 索引，供认证回调 O(1) 查询）
+func (m *Hy2Manager) SetUsers(users []User) {
+	m.userMu.Lock()
+	defer m.userMu.Unlock()
+	idx := map[string]int64{}
+	for _, u := range users {
+		idx[u.UUID] = u.ID
+	}
+	m.userIdx = idx
+}
 
 // AuthUser 认证回调：auth=uuid → 返回 uid
 func (m *Hy2Manager) AuthUser(auth string) (int64, bool) {
-	for _, u := range m.users {
-		if u.UUID == auth {
-			return u.ID, true
-		}
+	m.userMu.RLock()
+	defer m.userMu.RUnlock()
+	if m.userIdx == nil {
+		return 0, false
 	}
-	return 0, false
+	uid, ok := m.userIdx[auth]
+	return uid, ok
 }
 
 func (m *Hy2Manager) configPath() string { return filepath.Join(m.dir, "hy2", "config.yaml") }
@@ -73,7 +84,10 @@ func (m *Hy2Manager) IsRunning() bool {
 	}
 	if data, err := os.ReadFile(m.pidFile()); err == nil {
 		if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
-			return syscall.Kill(pid, 0) == nil
+			if syscall.Kill(pid, 0) == nil {
+				// 端口佐证：确认 traffic API 端口有监听（容器重启后 pid 可能被复用）
+				return portListening(m.apiPort)
+			}
 		}
 	}
 	return false
