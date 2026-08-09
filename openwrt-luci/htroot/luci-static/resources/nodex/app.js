@@ -663,14 +663,28 @@
             var raw = res.logs || '';
             var lines = raw.split('\n').filter(function (l) { return l.trim() !== ''; });
             if (info) info.textContent = lines.length + ' 行';
-            var html = lines.map(function (l) {
+            // 纯 DOM 构建（textContent，不依赖 innerHTML，避免 LuCI 环境渲染异常）
+            pre.textContent = '';
+            lines.forEach(function (l) {
                 var cls = 'lg-info';
                 if (/ERROR|FATAL|failed|refused|rejected/i.test(l)) cls = 'lg-err';
                 else if (/WARN|Warning|deprecated/i.test(l)) cls = 'lg-warn';
-                l = l.replace(/^([0-9]{4}[\-/][0-9]{2}[\-/][0-9]{2}[ T][0-9:.+]{6,})/, '<span class="lg-time">$1</span>');
-                return '<span class="' + cls + '">' + esc(l) + '</span>';
-            }).join('\n');
-            pre.innerHTML = html || '<span style="color:#666">（暂无日志）</span>';
+                var m = l.match(/^([0-9]{4}[\-/][0-9]{2}[\-/][0-9]{2}[ T][0-9:.+]{6,})/);
+                var span = document.createElement('span');
+                span.className = cls;
+                if (m) {
+                    var ts = document.createElement('span');
+                    ts.className = 'lg-time';
+                    ts.textContent = m[1];
+                    span.appendChild(ts);
+                    span.appendChild(document.createTextNode(l.slice(m[1].length)));
+                } else {
+                    span.textContent = l;
+                }
+                pre.appendChild(span);
+                pre.appendChild(document.createTextNode('\n'));
+            });
+            if (!lines.length) pre.textContent = '（暂无日志）';
             pre.scrollTop = pre.scrollHeight;
         }).catch(function (e) {
             var pre = document.getElementById('nx-log-pre');
