@@ -86,7 +86,7 @@
                 '<div class="nx-dash-item"><div class="num' + (online > 0 ? ' ok' : '') + '">' + online + '</div><div class="lbl">在线用户</div></div>' +
                 '<div class="nx-dash-sep"></div>' +
                 '<div class="nx-dash-item"><div class="num">' + fmtBytes(total) + '</div><div class="lbl">总流量</div></div>' +
-                '<div class="nx-dash-sync">' + (nodes.length === 0 ? '<span style="color:#999">未配置面板</span>' : (panelOk ? tag(true, '同步正常') : tag(false, '同步错误')) + ' · ' + esc(lastSync || '-')) + '</div>' +
+                '<div class="nx-dash-sync">' + esc(lastSync || '') + '</div>' +
                 '</div></div></div>';
 
             // 内核总开关
