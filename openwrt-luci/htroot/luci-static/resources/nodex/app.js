@@ -86,7 +86,7 @@
                 '<div class="nx-dash-item"><div class="num' + (online > 0 ? ' ok' : '') + '">' + online + '</div><div class="lbl">在线用户</div></div>' +
                 '<div class="nx-dash-sep"></div>' +
                 '<div class="nx-dash-item"><div class="num">' + fmtBytes(total) + '</div><div class="lbl">总流量</div></div>' +
-                '<div class="nx-dash-sync">面板同步 ' + (nodes.length === 0 ? '<span style="color:#999">未配置</span>' : (panelOk ? tag(true, '正常') : tag(false, '错误')) + ' · ' + esc(lastSync || '-')) + '</div>' +
+                '<div class="nx-dash-sync">' + (nodes.length === 0 ? '<span style="color:#999">未配置面板</span>' : (panelOk ? tag(true, '同步正常') : tag(false, '同步错误')) + ' · ' + esc(lastSync || '-')) + '</div>' +
                 '</div></div></div>';
 
             // 内核总开关
@@ -150,9 +150,15 @@
                 return '<tr class="cbi-section-table-row"><td>' + esc(u.node_name || '-') + '</td><td>' + esc(u.uid) + '</td>' +
                     '<td>' + fmtBytes(u.traffic) + '</td><td>' + esc((u.ips || []).join(', ') || '-') + '</td></tr>';
             }).join('');
+            // 面板同步小标签（放用户流量标题旁，彩色）
+            var syncBadge = nodes.length === 0
+                ? '<span style="font-size:11px;color:#999;font-weight:normal">面板同步 未配置</span>'
+                : (panelOk
+                    ? '<span style="font-size:11px;color:#159b4d;font-weight:normal">● 面板同步正常' + (lastSync ? ' ' + esc(lastSync.slice(11, 16)) : '') + '</span>'
+                    : '<span style="font-size:11px;color:#d23333;font-weight:normal" title="' + esc(panelErrs.map(function (n) { return n.name + ': ' + n.panel.lastError; }).join('\n')) + '">● 面板同步错误</span>');
             var usercard =
                 '<div class="cbi-section cbi-section-node"><div class="cbi-section-node-tabbed">' +
-                '<h3 style="margin:0 0 8px 0">用户流量</h3>' +
+                '<h3 style="margin:0 0 8px 0">用户流量 <span style="margin-left:8px">' + syncBadge + '</span></h3>' +
                 '<div class="nx-table-wrap"><table class="cbi-section-table">' +
                 '<tr class="cbi-section-table-titles"><th>节点</th><th>用户</th><th>流量</th><th>在线 IP</th></tr>' +
                 (urows || '<tr><td colspan="4" class="nx-empty">暂无流量数据（用户连接节点后自动统计）</td></tr>') +
