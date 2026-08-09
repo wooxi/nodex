@@ -15,7 +15,7 @@ import (
 	"github.com/wooxi/nodex/internal/web"
 )
 
-var version = "0.3.2"
+var version = "dev" // 构建时通过 -ldflags -X main.version 注入
 
 func main() {
 	var (

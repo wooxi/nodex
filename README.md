@@ -1,112 +1,41 @@
-# NodeX — OpenWrt 节点管家
+# NodeX 核心源码
 
-在 OpenWrt 路由器上运行的代理节点管理服务：**Xray（vless/vmess/trojan/ss + Reality）+ Hysteria2** 双内核，通过 V2Board/Xboard 标准协议对接面板，自带 Web 表单化配置界面。
+NodeX 节点管家——**核心源码仓库**。Go 单二进制 + Vue3 前端，管理 Xray/Hysteria2 节点、对接 Xboard 面板、支持 XrayR 转发模式。
 
-## 功能
+## 分发仓库（安装包）
 
-- 🚀 **双内核节点**：xray（vless+reality / vmess / trojan / shadowsocks）+ 官方 hysteria2
-- 🔗 **Xboard 对接**：标准 UniProxy 协议（拉用户 / 推流量 / 心跳 / 状态），per-user 精确流量统计
-- 🎛️ **Web 表单配置**：所有参数均为表单化配置项（非 JSON 手填），支持自动生成密钥/UUID/密码
-- 📊 **仪表盘**：节点状态、在线用户、实时流量
-- 📦 **OpenWrt 原生安装**：ipk 包 + init.d 开机自启
-- 🤖 **GitHub Actions**：自动编译 ipk 并发布 Release
-
-## 架构
-
-```
-┌────────────────── OpenWrt ──────────────────┐
-│                                            │
-│  Web UI (Vue3 表单) ──▶ nodex (Go) ──┐     │
-│                                     │     │
-│  ┌──────────────┬───────────────────▼──┐   │
-│  │ xray 进程     │ hysteria2 进程       │   │
-│  │ vless/vmess  │ 官方 hysteria 二进制  │   │
-│  │ /trojan/ss   │ auth.http 回调认证    │   │
-│  │ gRPC stats   │ /traffic API 统计     │   │
-│  └──────┬───────┴──────────┬──────────┘   │
-└─────────┼──────────────────┼──────────────┘
-          └──── 合并流量 ─────┘
-                    │ UniProxy push/alive/status
-                    ▼
-              Xboard 面板
-```
-
-## 安装
-
-### Docker 方式（推荐）
-
-```bash
-git clone https://github.com/wooxi/nodex
-cd nodex
-cp docker-compose.yml my-compose.yml   # 按需修改端口
-docker compose -f my-compose.yml up -d
-# 管理界面: http://<IP>:8888 （首次访问设置管理密码）
-# 配置数据保存在 ./data/ 目录
-```
-
-镜像已内置 xray 与 hysteria 内核，开箱即用。多节点：Web UI → 节点管理 → 新增节点。
-
-### OpenWrt 方式
-
-```bash
-opkg install nodex_*.ipk   # 需自行安装 xray/hysteria 到 /usr/bin/
-/etc/init.d/nodex enable
-/etc/init.d/nodex start
-# 管理界面: http://<路由器IP>:8888
-```
-
-## 面板配置步骤
-
-1. 面板后台 → 服务器 → 添加节点（v2ray 或 hysteria 类型），记录 **节点 ID**
-2. 面板后台 → 系统设置 → 获取**服务器通信密钥**（server_token）
-3. NodeX Web UI → 面板对接 → 填入面板地址 / 密钥 / 节点 ID → 测试连接
-4. 节点配置 → 设置端口与 Reality 参数 → 保存
-5. 仪表盘 → 启动节点
-
-### 对接协议
-
-| 接口 | 说明 |
-|---|---|
-| `GET /api/v1/server/UniProxy/config` | 拉取节点配置 |
-| `GET /api/v1/server/UniProxy/user` | 拉取用户列表 |
-| `POST /api/v1/server/UniProxy/push` | 推送流量 `{uid: [upload, download]}` |
-| `POST /api/v1/server/UniProxy/alive` | 在线设备 |
-| `POST /api/v1/server/UniProxy/status` | 系统状态 |
-
-## 已知注意事项
-
-- **Reality dest 兼容性**：dest 站点若部署了后量子加密（MLKEM，如 microsoft/apple/baidu），reality 握手会失败。请使用未部署 MLKEM 的站点（默认 `www.amazon.com`，实测兼容）。
-- **hysteria2 流量统计**：采用 `auth.http` 回调 + `/traffic` API 实现 per-user 统计（用户名 = 面板 uid，密码 = 用户 uuid），与 Xboard 订阅格式兼容。
-- **xray 版本**：官方 release 二进制不含 hysteria2 模块，故 hysteria2 由官方 hysteria 二进制单独运行。
-
-## 开发
-
-```bash
-# 前端
-cd webui && npm install && npm run build
-
-# 后端（需先构建前端，embed 依赖 dist）
-go build -o nodex ./cmd/nodex
-```
-
-## 多节点架构
-
-每个节点独立运行：
-- 独立的 xray 进程（独立数据目录、独立 gRPC stats 端口 10085+）
-- 独立的 hysteria2 进程（独立 traffic API 端口 8444+）
-- 独立的面板同步循环（每个节点对接自己的面板节点 ID）
-
-系统设置中的路径/证书/端口基址为全局配置，各节点可单独覆盖协议参数。
+| 版本 | 仓库 | 内容 |
+|---|---|---|
+| 🖥 **路由器版（LuCI）** | [wooxi/nodex-luci](https://github.com/wooxi/nodex-luci) | ipk 安装包 + 内核，LuCI 服务菜单集成 |
+| 🐳 **Docker 版** | [wooxi/nodex-docker](https://github.com/wooxi/nodex-docker) | Docker 镜像 + 数据持久化 |
 
 ## 目录结构
 
 ```
-cmd/nodex/           入口
-internal/config/     配置模型（表单映射）
-internal/panel/      Xboard 对接（UniProxy 协议 + 同步器）
-internal/xray/       xray 进程管理 + gRPC stats + hysteria2 管理
-internal/web/        Web API + 前端 embed
-webui/               Vue3 前端（表单化配置）
-openwrt/             OpenWrt ipk 打包
-.github/workflows/   GitHub Actions 编译发布
+cmd/nodex/          入口（版本号构建时注入）
+internal/
+  config/           配置模型
+  manager/          多节点管理器 + 看门狗
+  panel/            Xboard 面板对接（UniProxy 协议）
+  xray/             xray/hysteria2 进程管理 + 流量统计
+  web/              Web API + 前端 embed
+webui/              Vue3 前端（Docker 版界面，go:embed 进二进制）
 ```
+
+## 构建
+
+```bash
+cd webui && npm install && npm run build   # 生成 internal/web/dist
+cd ..
+VERSION=$(git describe --tags --always)
+CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=$VERSION" -o nodex ./cmd/nodex
+```
+
+## 功能
+
+- 多节点管理（每节点独立 xray/hysteria2 进程，独立端口/API/同步循环）
+- Xboard 面板对接（拉用户 / 推流量 / 心跳 / 状态）
+- 协议：vless(+Reality/TLS/WS) / vmess / trojan / shadowsocks / hysteria2
+- 转发出站（XrayR 转发模式，多目标负载均衡）
+- 内核总开关、核心一键下载/更新、流量统计、在线用户/IP
+- 内核崩溃自动拉起（看门狗）

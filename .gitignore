@@ -1,7 +1,3 @@
-# NodeX 构建产物
-openwrt/files/nodex
-internal/web/dist/
 webui/node_modules/
-webui/dist/
+internal/web/dist/
 *.ipk
-/tmp/
