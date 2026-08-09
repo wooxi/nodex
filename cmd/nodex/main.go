@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 	_ "time/tzdata" // 内置时区数据库（OpenWrt 无 zoneinfo 也能解析 Asia/Shanghai）
 
@@ -72,7 +73,7 @@ func main() {
 		listen = "0.0.0.0"
 	}
 	addr := fmt.Sprintf("%s:%d", listen, cfg.Web.Port)
-	log.Printf("[nodex] NodeX v%s Web 管理界面: http://%s", version, addr)
+	log.Printf("[nodex] NodeX %s Web 管理界面: http://%s", strings.TrimPrefix(version, "v"), addr)
 	if err := http.ListenAndServe(addr, srv.Handler()); err != nil {
 		log.Fatalf("[nodex] Web 服务启动失败: %v", err)
 	}
