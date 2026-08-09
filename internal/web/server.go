@@ -201,12 +201,10 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		newCfg.EnsureDefaults()
-		// 停止旧运行时，重建并自动启动（保存即生效）
-		s.mgr.StopAll()
+		// 最小化重启：仅节点参数变化重启该节点，节点增删/系统变更才全量重启
+		s.mgr.ApplyConfig(s.cfg, &newCfg)
 		s.cfg = &newCfg
 		s.saveConfig()
-		s.mgr.Rebuild(s.cfg)
-		s.mgr.StartAll()
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "config": s.cfg})
 	default:
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method"})
@@ -259,9 +257,7 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request) {
 	switch req.Action {
 	case "start":
 		if req.NodeID != "" {
-			if rt := s.mgr.Get(req.NodeID); rt != nil {
-				s.startOne(rt)
-			}
+			s.mgr.Start(req.NodeID)
 		} else {
 			s.mgr.StartAll()
 		}
@@ -294,28 +290,6 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-}
-
-// startOne 启动单节点（含认证信息注入）
-func (s *Server) startOne(rt *manager.Runtime) {
-	rt.Hy2.SetAuth(fmt.Sprintf("http://127.0.0.1:%d/api/hy2-auth?node=%s", s.cfg.Web.Port, rt.Cfg.ID), rt.Syncer.Hy2Secret())
-	if !s.cfg.Panel.Enabled && rt.Cfg.Node.UUID != "" {
-		rt.Xray.SetUsers([]xray.User{{ID: 1, UUID: rt.Cfg.Node.UUID}})
-		rt.Hy2.SetUsers([]xray.User{{ID: 1, UUID: rt.Cfg.Node.UUID}})
-	}
-	rt.Syncer.Start()
-	if err := rt.Xray.Start(); err != nil {
-		log.Printf("[nodex][%s] 启动 xray 失败: %v", rt.Cfg.ID, err)
-	} else {
-		// 触发一次同步（应用面板配置）
-		go func() {
-			time.Sleep(1 * time.Second)
-			rt.Syncer.Start()
-		}()
-	}
-	if err := rt.Hy2.Start(); err != nil {
-		log.Printf("[nodex][%s] 启动 hysteria2 失败: %v", rt.Cfg.ID, err)
-	}
 }
 
 // handleHy2Auth hysteria2 认证回调（auth.http 模式）
@@ -358,14 +332,37 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	} else {
 		path = rt.Dir + "/xray/error.log"
 	}
-	data, err := os.ReadFile(path)
+	// 从文件尾部倒读最后 200 行（不整文件读入内存，避免路由器闪存 IO 放大）
+	const (
+		maxLines = 200
+		maxBytes = 512 * 1024
+	)
+	f, err := os.Open(path)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"logs": ""})
 		return
 	}
-	lines := strings.Split(string(data), "\n")
-	if len(lines) > 200 {
-		lines = lines[len(lines)-200:]
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil || st.Size() == 0 {
+		writeJSON(w, http.StatusOK, map[string]any{"logs": ""})
+		return
+	}
+	start := st.Size() - maxBytes
+	if start < 0 {
+		start = 0
+	}
+	buf := make([]byte, st.Size()-start)
+	if _, err := f.ReadAt(buf, start); err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"logs": ""})
+		return
+	}
+	lines := strings.Split(string(buf), "\n")
+	if start > 0 {
+		lines = lines[1:] // 丢弃首行可能的不完整片段
+	}
+	if len(lines) > maxLines {
+		lines = lines[len(lines)-maxLines:]
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"logs": strings.Join(lines, "\n")})
 }

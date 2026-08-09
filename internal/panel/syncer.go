@@ -39,12 +39,16 @@ type Syncer struct {
 	hy2Last map[int64]xray.Traffic // hysteria2 流量快照
 	hy2Port int                    // hysteria2 面板端口（指纹计算用）
 
+	remotePull int // 面板 base_config 返回的间隔（覆盖本地）
+	remotePush int
+
 	lastFingerprint string // 最近应用的配置指纹
 
 	mu       sync.Mutex
 	running  bool
 	stopCh   chan struct{}
 	lastSync time.Time
+	lastPush time.Time
 	lastErr  string
 }
 
@@ -102,18 +106,58 @@ func (s *Syncer) Start() {
 			time.Sleep(2 * time.Second)
 		}
 		s.syncOnce()
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
+		lastTick := time.Now()
 		for {
 			select {
 			case <-ch:
 				log.Println("[nodex] 同步器已停止")
 				return
-			case <-ticker.C:
+			case <-time.After(s.loopInterval()):
+				// 防漂移：以整周期节奏运行，避免 time.After 累积误差
+				if time.Since(lastTick) < s.loopInterval()/2 {
+					continue
+				}
+				lastTick = time.Now()
 				s.syncOnce()
 			}
 		}
 	}()
+}
+
+// loopInterval 同步循环周期：面板 base_config 优先，其次本地 pull_interval
+func (s *Syncer) loopInterval() time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sec := s.remotePull
+	if sec <= 0 {
+		sec = s.global.Panel.PullInterval
+	}
+	if sec <= 0 {
+		sec = 60
+	}
+	if sec < 10 {
+		sec = 10 // 下限 10s，防止面板误配导致刷爆
+	}
+	return time.Duration(sec) * time.Second
+}
+
+// pushDue 是否到达推送时机（流量/在线/状态上报受 PushInterval 节流）
+func (s *Syncer) pushDue() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sec := s.remotePush
+	if sec <= 0 {
+		sec = s.global.Panel.PushInterval
+	}
+	if sec <= 0 {
+		sec = 60
+	}
+	now := time.Now()
+	if now.Sub(s.lastPush) >= time.Duration(sec)*time.Second {
+		s.lastPush = now
+		return true
+	}
+	return false
 }
 
 func (s *Syncer) Stop() {
@@ -156,6 +200,15 @@ func (s *Syncer) syncOnce() {
 		s.setErr("拉取节点配置失败: " + err.Error())
 		return
 	}
+	// 面板 base_config 返回的间隔覆盖本地（同步循环节奏）
+	s.mu.Lock()
+	if remote.BaseConfig.PullInterval > 0 {
+		s.remotePull = remote.BaseConfig.PullInterval
+	}
+	if remote.BaseConfig.PushInterval > 0 {
+		s.remotePush = remote.BaseConfig.PushInterval
+	}
+	s.mu.Unlock()
 	// 解析 ws/grpc 传输参数并注入 xray
 	remoteCfg := &xray.RemoteConfig{
 		Protocol: remote.Protocol,
@@ -225,53 +278,57 @@ func (s *Syncer) syncOnce() {
 		log.Printf("[nodex] 面板配置已应用（端口=%d 网络=%s 用户=%d）", remoteCfg.Port, remoteCfg.Network, len(users))
 	}
 
-	// 4. 推送流量增量（xray + hysteria2 合并）
-	diffs := map[int64]xray.Traffic{}
-	xdiff, err := s.stats.SnapshotAndDiff(ctx)
-	if err != nil {
-		s.setErr("读取 xray 流量统计失败: " + err.Error())
-		return
-	}
-	for uid, d := range xdiff {
-		diffs[uid] = d
-	}
-	hdiff, err := s.hy2.SnapshotAndDiff(ctx, &s.hy2Last)
-	if err == nil {
-		for uid, d := range hdiff {
-			if v, ok := diffs[uid]; ok {
-				v.Up += d.Up
-				v.Down += d.Down
-				diffs[uid] = v
-			} else {
-				diffs[uid] = d
+	// 4-6. 推送（流量/在线/状态）受 PushInterval 节流；快照仅在推送时推进，
+	//      未到推送周期时增量自动累积，不会丢失
+	if s.pushDue() {
+		// 4. 推送流量增量（xray + hysteria2 合并）
+		diffs := map[int64]xray.Traffic{}
+		xdiff, err := s.stats.SnapshotAndDiff(ctx)
+		if err != nil {
+			s.setErr("读取 xray 流量统计失败: " + err.Error())
+			return
+		}
+		for uid, d := range xdiff {
+			diffs[uid] = d
+		}
+		hdiff, err := s.hy2.SnapshotAndDiff(ctx, &s.hy2Last)
+		if err == nil {
+			for uid, d := range hdiff {
+				if v, ok := diffs[uid]; ok {
+					v.Up += d.Up
+					v.Down += d.Down
+					diffs[uid] = v
+				} else {
+					diffs[uid] = d
+				}
 			}
 		}
-	}
-	if len(diffs) > 0 {
-		// 转成 Xboard push 格式 {uid: [upload, download]}
-		payload := map[int64][2]int64{}
-		for uid, d := range diffs {
-			payload[uid] = [2]int64{d.Up, d.Down}
+		if len(diffs) > 0 {
+			// 转成 Xboard push 格式 {uid: [upload, download]}
+			payload := map[int64][2]int64{}
+			for uid, d := range diffs {
+				payload[uid] = [2]int64{d.Up, d.Down}
+			}
+			if err := s.panel.PushTraffic(ctx, payload); err != nil {
+				s.setErr("推送流量失败: " + err.Error())
+				return
+			}
 		}
-		if err := s.panel.PushTraffic(ctx, payload); err != nil {
-			s.setErr("推送流量失败: " + err.Error())
-			return
-		}
-	}
 
-	// 5. 推送在线设备
-	if alive := s.accessLog.AliveIPs(3 * time.Minute); len(alive) > 0 {
-		if err := s.panel.PushAlive(ctx, alive); err != nil {
-			s.setErr("推送在线设备失败: " + err.Error())
-			return
+		// 5. 推送在线设备
+		if alive := s.accessLog.AliveIPs(3 * time.Minute); len(alive) > 0 {
+			if err := s.panel.PushAlive(ctx, alive); err != nil {
+				s.setErr("推送在线设备失败: " + err.Error())
+				return
+			}
 		}
-	}
 
-	// 6. 推送服务器状态
-	if status := s.collectStatus(); status != nil {
-		if err := s.panel.PushStatus(ctx, status); err != nil {
-			// 状态推送失败不影响主流程
-			log.Printf("[nodex] 状态推送失败: %v", err)
+		// 6. 推送服务器状态
+		if status := s.collectStatus(); status != nil {
+			if err := s.panel.PushStatus(ctx, status); err != nil {
+				// 状态推送失败不影响主流程
+				log.Printf("[nodex] 状态推送失败: %v", err)
+			}
 		}
 	}
 
