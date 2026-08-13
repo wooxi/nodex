@@ -185,7 +185,13 @@ func (m *Hy2Manager) Start() error {
 	}
 	m.cmd = cmd
 	os.WriteFile(m.pidFile(), []byte(strconv.Itoa(cmd.Process.Pid)), 0o644)
-	go cmd.Wait()
+	// 进程退出后清理 m.cmd，避免 watchdog 的 IsRunning() 误判
+	go func(c *exec.Cmd) {
+		_ = c.Wait()
+		if m.cmd == c {
+			m.cmd = nil
+		}
+	}(cmd)
 	return nil
 }
 
@@ -193,15 +199,19 @@ func (m *Hy2Manager) Start() error {
 func (m *Hy2Manager) Stop() error {
 	pid := m.Pid()
 	if pid > 0 {
-		syscall.Kill(pid, syscall.SIGTERM)
-		for i := 0; i < 50; i++ {
-			if syscall.Kill(pid, 0) != nil {
-				break
+		// 验证 PID 是 hysteria 进程，避免 pid 文件过期导致误杀其他进程
+		exe, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
+		if err == nil && strings.Contains(exe, "hysteria") {
+			syscall.Kill(pid, syscall.SIGTERM)
+			for i := 0; i < 50; i++ {
+				if syscall.Kill(pid, 0) != nil {
+					break
+				}
+				time.Sleep(100 * time.Millisecond)
 			}
-			time.Sleep(100 * time.Millisecond)
+			syscall.Kill(pid, syscall.SIGKILL)
+			time.Sleep(200 * time.Millisecond)
 		}
-		syscall.Kill(pid, syscall.SIGKILL)
-		time.Sleep(200 * time.Millisecond)
 	}
 	m.cmd = nil
 	os.Remove(m.pidFile())

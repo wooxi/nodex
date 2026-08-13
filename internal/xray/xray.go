@@ -166,7 +166,13 @@ func (m *Manager) Start() error {
 	}
 	m.cmd = cmd
 	m.writePID(cmd.Process.Pid)
-	go cmd.Wait()
+	// 进程退出后清理 m.cmd，避免 watchdog 的 IsRunning() 误判（Signal(0) 对已退出进程返回错误）
+	go func(c *exec.Cmd) {
+		_ = c.Wait()
+		if m.cmd == c {
+			m.cmd = nil
+		}
+	}(cmd)
 	return nil
 }
 
@@ -174,17 +180,21 @@ func (m *Manager) Start() error {
 func (m *Manager) Stop() error {
 	pid := m.Pid()
 	if pid > 0 {
-		syscall.Kill(pid, syscall.SIGTERM)
-		// 等待优雅退出（最多 5 秒）
-		for i := 0; i < 50; i++ {
-			if syscall.Kill(pid, 0) != nil {
-				break
+		// 验证 PID 是 xray 进程（用 exe 路径判断，避免 pid 文件过期导致误杀其他进程）
+		exe, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
+		if err == nil && strings.Contains(exe, "xray") {
+			syscall.Kill(pid, syscall.SIGTERM)
+			// 等待优雅退出（最多 5 秒）
+			for i := 0; i < 50; i++ {
+				if syscall.Kill(pid, 0) != nil {
+					break
+				}
+				time.Sleep(100 * time.Millisecond)
 			}
-			time.Sleep(100 * time.Millisecond)
+			// 强制终止
+			syscall.Kill(pid, syscall.SIGKILL)
+			time.Sleep(200 * time.Millisecond)
 		}
-		// 强制终止
-		syscall.Kill(pid, syscall.SIGKILL)
-		time.Sleep(200 * time.Millisecond)
 	}
 	m.cmd = nil
 	os.Remove(m.pidFile())
@@ -320,6 +330,10 @@ func (m *Manager) buildOutbounds() []any {
 	if fingerprint == "" {
 		fingerprint = "chrome"
 	}
+	hb := fwd.HeartbeatPeriod
+	if hb == 0 {
+		hb = 15
+	}
 	port := fwd.Targets[0].Port
 	if port == 0 {
 		port = 443
@@ -357,6 +371,7 @@ func (m *Manager) buildOutbounds() []any {
 					"headers": map[string]any{
 						"Host": fwd.WSHost,
 					},
+					"heartbeatPeriod": hb,
 				},
 			},
 		})

@@ -49,13 +49,14 @@ type Node struct {
 
 // Forward 转发出站配置：面板入站流量转发到落地节点（vless+ws+tls）
 type Forward struct {
-	Enabled     bool          `json:"enabled"`      // 启用转发（替代直连）
-	Targets     []ForwardTarget `json:"targets"`    // 目标服务器（负载均衡）
-	UUID        string        `json:"uuid"`         // 落地节点 UUID
-	ServerName  string        `json:"server_name"`  // SNI
-	WSPath      string        `json:"ws_path"`      // WebSocket 路径
-	WSHost      string        `json:"ws_host"`      // WebSocket Host 头
-	Fingerprint string        `json:"fingerprint"`  // 指纹，默认 chrome
+	Enabled         bool            `json:"enabled"`        // 启用转发（替代直连）
+	Targets         []ForwardTarget `json:"targets"`        // 目标服务器（负载均衡）
+	UUID            string          `json:"uuid"`           // 落地节点 UUID
+	ServerName      string          `json:"server_name"`    // SNI
+	WSPath          string          `json:"ws_path"`        // WebSocket 路径
+	WSHost          string          `json:"ws_host"`        // WebSocket Host 头
+	Fingerprint     string          `json:"fingerprint"`    // 指纹，默认 chrome
+	HeartbeatPeriod int             `json:"heartbeat_period"` // WebSocket Ping 保活间隔（秒，0=不保活，默认 15）
 }
 
 // ForwardTarget 转发目标服务器
@@ -138,7 +139,7 @@ func DefaultNode() *Node {
 		ID:      newID(),
 		Name:    "新节点",
 		Enabled: true,
-		Forward: Forward{Fingerprint: "chrome"},
+		Forward: Forward{Fingerprint: "chrome", HeartbeatPeriod: 15},
 		Node: NodeConfig{
 			Protocol: "vless",
 			Port:     8686,
