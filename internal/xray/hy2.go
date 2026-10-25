@@ -165,6 +165,8 @@ func (m *Hy2Manager) Start() error {
 			}
 		}
 	}
+	// pid 文件之外的孤儿同样要清：否则端口被占，新实例起来即退，watchdog 反复重试
+	reapStrays(m.configPath(), "hysteria")
 	conf, err := m.BuildConfig(m.authURL, m.secret)
 	if err != nil {
 		return err
