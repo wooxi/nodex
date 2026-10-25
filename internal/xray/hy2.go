@@ -140,6 +140,10 @@ func (m *Hy2Manager) BuildConfig(authURL, trafficSecret string) (string, error) 
 	}
 	// per-user 认证：HTTP 回调 NodeX
 	b.WriteString("auth:\n  type: http\n  http:\n    url: " + authURL + "\n")
+	// 伪装站点：非 Hysteria 客户端访问时反代到正常网站，降低主动探测特征
+	if cfg.Masquerade != "" {
+		fmt.Fprintf(&b, "masquerade:\n  type: proxy\n  proxy:\n    url: %s\n    rewriteHost: true\n", cfg.Masquerade)
+	}
 	// 流量统计 API
 	b.WriteString("trafficStats:\n")
 	fmt.Fprintf(&b, "  listen: 127.0.0.1:%d\n", m.apiPort)

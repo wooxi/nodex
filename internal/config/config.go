@@ -110,6 +110,7 @@ type Hy2 struct {
 	CertPath     string `json:"cert_path"`
 	KeyPath      string `json:"key_path"`
 	BinPath      string `json:"bin_path,omitempty"` // 兼容旧版字段
+	Masquerade   string `json:"masquerade,omitempty"` // 伪装站点 URL，空则不生成 masquerade 段
 }
 
 const DefaultConfigPath = "/etc/nodex/config.json"
