@@ -43,6 +43,7 @@ type Node struct {
 	Enabled  bool       `json:"enabled"`  // 是否启用
 	NodeID   int        `json:"node_id"`  // 面板节点 ID（每节点不同）
 	NodeType string     `json:"node_type"` // 面板节点类型，留空自动
+	Token    string     `json:"token"`     // 节点级面板密钥（xpanel 每节点独立 token，留空用全局）
 	Node     NodeConfig `json:"node"`     // 协议配置
 	Forward  Forward    `json:"forward"`  // 转发出站（XrayR 转发模式）
 }

@@ -33,9 +33,13 @@
           </el-select>
           <span class="tip">留空由面板返回的协议决定</span>
         </el-form-item>
+        <el-form-item label="节点密钥 token">
+          <el-input v-model="form.token" placeholder="留空使用全局密钥" style="width:320px" show-password />
+          <span class="tip">xpanel 每个节点有独立 token，多节点场景必填</span>
+        </el-form-item>
         <el-form-item>
           <el-button :loading="testing" @click="testPanel">测试面板连接</el-button>
-          <span class="tip">面板地址/密钥为全局配置（面板对接页）</span>
+          <span class="tip">面板地址为全局配置（面板对接页）</span>
         </el-form-item>
       </el-form>
     </div>
@@ -246,7 +250,8 @@ async function testPanel() {
       url: cfg.panel.url || '',
       token: cfg.panel.token || '',
       node_id: form.value.node_id || 0,
-      node_type: form.value.node_type || ''
+      node_type: form.value.node_type || '',
+      token: form.value.token || ''
     })
     ElMessage.success(res.message)
   } catch (e) { ElMessage.error(e.message) } finally { testing.value = false }

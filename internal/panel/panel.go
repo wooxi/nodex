@@ -66,6 +66,9 @@ func NewClientForNode(global *config.PanelConfig, node *config.Node) *Client {
 	cfg := *global
 	cfg.NodeID = node.NodeID
 	cfg.NodeType = node.NodeType
+	if node.Token != "" {
+		cfg.Token = node.Token
+	}
 	return NewClient(&cfg)
 }
 
