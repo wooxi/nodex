@@ -35,6 +35,9 @@ type Config struct {
 	Cipher          string          `json:"cipher"`
 	TLSSettings     json.RawMessage `json:"tls_settings"`
 	RealitySettings json.RawMessage `json:"reality_settings"`
+	// hysteria2 混淆（面板开关，salamander 或空=关闭）
+	Obfs         string `json:"obfs"`
+	ObfsPassword string `json:"obfs-password"`
 
 	BaseConfig struct {
 		PushInterval int `json:"push_interval"`

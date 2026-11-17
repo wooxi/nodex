@@ -285,21 +285,34 @@ func (s *Syncer) syncOnce() {
 		node.NodeType = remote.Protocol
 		s.xm.UpdateConfig(node, global)
 	}
-	// hysteria 节点：hy2 端口跟随面板
-	if (remote.Protocol == "hysteria" || remote.Protocol == "hysteria2") && remote.ServerPort > 0 {
-		s.hy2.SetRemotePort(remote.ServerPort)
-		s.hy2Port = remote.ServerPort
+	// hysteria 节点：端口与混淆跟随面板
+	hy2Obfs, hy2ObfsPass := "", ""
+	if remote.Protocol == "hysteria" || remote.Protocol == "hysteria2" {
+		if remote.ServerPort > 0 {
+			s.hy2.SetRemotePort(remote.ServerPort)
+			s.hy2Port = remote.ServerPort
+		}
+		hy2Obfs = remote.Obfs
+		hy2ObfsPass = remote.ObfsPassword
 	} else {
 		s.hy2.SetRemotePort(0)
 		s.hy2Port = 0
+	}
+	// 面板混淆开关是权威源：关闭时清空，避免本地残留导致客户端与服务端不一致
+	if node.Node.Hy2.Obfs != hy2Obfs || node.Node.Hy2.ObfsPassword != hy2ObfsPass {
+		node.Node.Hy2.Obfs = hy2Obfs
+		node.Node.Hy2.ObfsPassword = hy2ObfsPass
+		s.hy2.UpdateConfig(node, global)
+		log.Printf("[nodex] 面板混淆已应用（obfs=%s）", hy2Obfs)
 	}
 
 	// 3.5 配置指纹变化时重启 xray + hy2（使 remote/users 生效）
 	// users 排序后进指纹：面板返回顺序抖动不触发无谓重启
 	sortedUsers := append([]xray.User(nil), users...)
 	sort.Slice(sortedUsers, func(i, j int) bool { return sortedUsers[i].ID < sortedUsers[j].ID })
-	fingerprint := fmt.Sprintf("%s|%d|%s|%d|%v|%d",
-		remoteCfg.Protocol, remoteCfg.Port, remoteCfg.Network, remoteCfg.TLS, sortedUsers, s.hy2Port)
+	fingerprint := fmt.Sprintf("%s|%d|%s|%d|%v|%d|%s|%s",
+		remoteCfg.Protocol, remoteCfg.Port, remoteCfg.Network, remoteCfg.TLS, sortedUsers, s.hy2Port,
+		hy2Obfs, hy2ObfsPass)
 	if fingerprint != s.lastFingerprint {
 		s.lastFingerprint = fingerprint
 		if err := s.xm.Restart(); err != nil {
