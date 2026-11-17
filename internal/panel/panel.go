@@ -33,6 +33,8 @@ type Config struct {
 	Flow            string          `json:"flow"`
 	TLS             int             `json:"tls"`
 	Cipher          string          `json:"cipher"`
+	TLSSettings     json.RawMessage `json:"tls_settings"`
+	RealitySettings json.RawMessage `json:"reality_settings"`
 
 	BaseConfig struct {
 		PushInterval int `json:"push_interval"`

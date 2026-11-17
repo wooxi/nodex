@@ -221,12 +221,48 @@ func (s *Syncer) syncOnce() {
 	}
 	if len(remote.NetworkSettings) > 0 {
 		var ns struct {
-			Path string `json:"path"`
-			Host string `json:"host"`
+			Path    string `json:"path"`
+			Host    string `json:"host"`
+			Headers struct {
+				Host string `json:"Host"`
+			} `json:"headers"`
 		}
 		if err := json.Unmarshal(remote.NetworkSettings, &ns); err == nil {
 			remoteCfg.WSPath = ns.Path
-			remoteCfg.WSHost = ns.Host
+			if ns.Host != "" {
+				remoteCfg.WSHost = ns.Host
+			} else {
+				remoteCfg.WSHost = ns.Headers.Host
+			}
+		}
+	}
+	// 面板下发的 TLS / Reality 参数（面板生成并持有密钥，节点端直接采用）
+	if len(remote.TLSSettings) > 0 {
+		var ts struct {
+			ServerName string `json:"server_name"`
+			CertPath   string `json:"cert_path"`
+			KeyPath    string `json:"key_path"`
+		}
+		if err := json.Unmarshal(remote.TLSSettings, &ts); err == nil {
+			if ts.ServerName != "" {
+				remoteCfg.ServerName = ts.ServerName
+			}
+			remoteCfg.CertPath = ts.CertPath
+			remoteCfg.KeyPath = ts.KeyPath
+		}
+	}
+	if len(remote.RealitySettings) > 0 {
+		var rs struct {
+			Dest        string   `json:"dest"`
+			ServerNames []string `json:"server_names"`
+			PrivateKey  string   `json:"private_key"`
+			ShortIDs    []string `json:"short_ids"`
+		}
+		if err := json.Unmarshal(remote.RealitySettings, &rs); err == nil {
+			remoteCfg.RealityDest = rs.Dest
+			remoteCfg.RealityServerNames = rs.ServerNames
+			remoteCfg.RealityPrivateKey = rs.PrivateKey
+			remoteCfg.RealityShortIDs = rs.ShortIDs
 		}
 	}
 	s.xm.SetRemoteConfig(remoteCfg)

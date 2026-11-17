@@ -49,6 +49,20 @@ type RemoteConfig struct {
 	Cipher     string
 	WSHost     string
 	WSPath     string
+	ServerName string
+	CertPath   string
+	KeyPath    string
+	// 面板下发的 Reality 参数（优先级高于本地配置）
+	RealityDest        string
+	RealityServerNames []string
+	RealityPrivateKey  string
+	RealityShortIDs    []string
+}
+
+
+// hasReality 面板是否下发了完整的 Reality 参数
+func (r *RemoteConfig) hasReality() bool {
+	return r != nil && r.RealityPrivateKey != "" && r.RealityDest != ""
 }
 
 func NewManager(node *config.Node, global *config.Config, dir string, apiPort int) *Manager {
@@ -441,9 +455,9 @@ func (m *Manager) buildPanelInbound(users []User) []any {
 		if m.remote.Network != "" {
 			network = m.remote.Network
 		}
-		// 面板 tls 字段优先（0=关闭 1=TLS 2=Reality）；面板关闭 TLS 时不用 Reality（客户端订阅与节点保持一致）
-		if m.remote.TLS == 0 && tlsMode == 2 {
-			tlsMode = 0
+		// 面板 tls 字段优先（0=关闭 1=TLS 2=Reality）；vless 节点完全以面板为准
+		if m.remote.TLS > 0 || m.remote.Protocol == "vless" {
+			tlsMode = m.remote.TLS
 		}
 	}
 
@@ -457,6 +471,17 @@ func (m *Manager) buildPanelInbound(users []User) []any {
 		ServerName: cfg.ServerName,
 		Reality:    cfg.Reality,
 		SSMethod:   cfg.SSMethod,
+	}
+	if m.remote != nil {
+		if m.remote.CertPath != "" {
+			node.CertPath = m.remote.CertPath
+		}
+		if m.remote.KeyPath != "" {
+			node.KeyPath = m.remote.KeyPath
+		}
+		if m.remote.ServerName != "" {
+			node.ServerName = m.remote.ServerName
+		}
 	}
 	if node.Protocol != "hysteria2" && node.Protocol != "hysteria" {
 		inbounds = append(inbounds, m.xrayInboundWithNetwork(node, users, network, m.remote))
@@ -500,17 +525,30 @@ func (m *Manager) xrayInboundWithNetwork(cfg config.NodeConfig, users []User, ne
 
 	// TLS 层
 	if cfg.TLS == 2 {
+		// 面板下发的 Reality 参数优先，其次回落到本地配置
+		dest := cfg.Reality.Dest
 		serverNames := config.SplitCSV(cfg.Reality.ServerNames)
 		shortIDs := config.SplitCSV(cfg.Reality.ShortIDs)
+		privKey := cfg.Reality.PrivateKey
+		if remote.hasReality() {
+			dest = remote.RealityDest
+			privKey = remote.RealityPrivateKey
+			if len(remote.RealityServerNames) > 0 {
+				serverNames = remote.RealityServerNames
+			}
+			if len(remote.RealityShortIDs) > 0 {
+				shortIDs = remote.RealityShortIDs
+			}
+		}
 		if len(shortIDs) == 0 {
 			shortIDs = []string{""}
 		}
 		stream["security"] = "reality"
 		stream["realitySettings"] = map[string]any{
 			"show":        false,
-			"dest":        cfg.Reality.Dest,
+			"dest":        dest,
 			"serverNames": serverNames,
-			"privateKey":  cfg.Reality.PrivateKey,
+			"privateKey":  privKey,
 			"shortIds":    shortIDs,
 		}
 	} else if cfg.TLS == 1 {
