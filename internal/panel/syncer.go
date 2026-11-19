@@ -40,6 +40,8 @@ type Syncer struct {
 	hy2Last map[int64]xray.Traffic // hysteria2 流量快照
 	hy2Port int                    // hysteria2 面板端口（指纹计算用）
 
+	lastPortHopping string // 上次记录的 Hy2 端口跳跃范围
+
 	remotePull int // 面板 base_config 返回的间隔（覆盖本地）
 	remotePush int
 
@@ -294,6 +296,15 @@ func (s *Syncer) syncOnce() {
 		}
 		hy2Obfs = remote.Obfs
 		hy2ObfsPass = remote.ObfsPassword
+		hopping := strings.TrimSpace(remote.PortHopping)
+		if hopping != s.lastPortHopping {
+			s.lastPortHopping = hopping
+			if hopping != "" {
+				log.Printf("[nodex] 面板已配置 Hy2 端口跳跃（port_hopping=%s -> :%d），请确保宿主机 UDP 重定向已就绪", hopping, s.hy2Port)
+			} else {
+				log.Printf("[nodex] 面板已关闭 Hy2 端口跳跃")
+			}
+		}
 	} else {
 		s.hy2.SetRemotePort(0)
 		s.hy2Port = 0

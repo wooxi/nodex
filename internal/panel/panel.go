@@ -38,6 +38,7 @@ type Config struct {
 	// hysteria2 混淆（面板开关，salamander 或空=关闭）
 	Obfs         string `json:"obfs"`
 	ObfsPassword string `json:"obfs-password"`
+	PortHopping  string `json:"port_hopping"`
 
 	BaseConfig struct {
 		PushInterval int `json:"push_interval"`
